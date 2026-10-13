@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vision Assistant Live AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --glass-bg: rgba(15, 23, 42, 0.55);
+            --glass-card: rgba(255, 255, 255, 0.07);
+            --glass-border: rgba(255, 255, 255, 0.15);
+            --glass-border-light: rgba(255, 255, 255, 0.25);
+            --accent-purple: linear-gradient(135deg, #a855f7 0%, #7c3aed 100%);
+            --accent-emerald: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            --accent-blue: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            --accent-amber: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Outfit', sans-serif;
+            background: #090d16;
+            color: var(--text-main);
+        }
+
+        /* FULL WINDOW CAMERA & OVERLAY */
+        .viewport-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+            background: #000;
+        }
+
+        video#video-stream {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        canvas#overlay-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            pointer-events: none;
+        }
+
+        /* FLOATING HUD TOP LEFT HEADER */
+        .floating-header {
+            position: fixed;
+            top: 1.25rem;
+            left: 1.25rem;
+            z-index: 10;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border: 1px solid var(--glass-border);
+            border-radius: 18px;
+            padding: 0.75rem 1.25rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+        }
+
+        .status-pulse {
+            width: 10px;
+            height: 10px;
+            background-color: #10b981;
+            border-radius: 50%;
+            box-shadow: 0 0 12px #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+            }
+
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
+            }
+
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+            }
+        }
+
+        .header-title-group h1 {
+            margin: 0;
+            font-size: 1.15rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            background: linear-gradient(to right, #c084fc, #818cf8, #38bdf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-title-group p {
+            margin: 2px 0 0 0;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* SCANNING INDICATOR OVERLAY */
+        .scanning-overlay {
+            position: fixed;
+            top: 1.5rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(16, 185, 129, 0.85);
+            backdrop-filter: blur(10px);
+            color: white;
+            padding: 0.6rem 1.4rem;
+            border-radius: 30px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            display: none;
+            z-index: 15;
+            box-shadow: 0 0 25px rgba(16, 185, 129, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            letter-spacing: 0.5px;
+        }
+
+        /* FLOATING DEPTH MAP PIP (BOTTOM LEFT) */
+        .depth-pip-container {
+            position: fixed;
+            bottom: 1.25rem;
+            left: 1.25rem;
+            z-index: 10;
+            width: 260px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border: 1px solid var(--glass-border);
+            border-radius: 18px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            transition: all 0.3s ease;
+        }
+
+        .depth-pip-header {
+            padding: 0.5rem 0.8rem;
+            background: rgba(0, 0, 0, 0.4);
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .depth-pip-body {
+            position: relative;
+            width: 100%;
+            height: 160px;
+            background: #000;
+        }
+
+        .depth-pip-body img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        /* FLOATING TRANSPARENT SIDE PANEL (ACTIONS & LOGS) */
+        .glass-panel-sidebar {
+            position: fixed;
+            top: 1.25rem;
+            right: 1.25rem;
+            bottom: 1.25rem;
+            width: 380px;
+            max-width: calc(100vw - 2.5rem);
+            z-index: 10;
+            background: var(--glass-bg);
+            backdrop-filter: blur(24px) saturate(180%);
+            -webkit-backdrop-filter: blur(24px) saturate(180%);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 1.4rem;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+            overflow-y: auto;
+        }
+
+        .panel-section-title {
+            margin: 0 0 0.5rem 0;
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+        }
+
+        .actions-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .btn-glass {
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 0.9rem 1.2rem;
+            border-radius: 14px;
+            font-size: 1rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.6rem;
+            width: 100%;
+            backdrop-filter: blur(10px);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-glass::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .btn-glass:hover::before {
+            left: 100%;
+        }
+
+        .btn-glass:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4);
+            border-color: rgba(255, 255, 255, 0.4);
+        }
+
+        .btn-glass:active {
+            transform: translateY(0);
+        }
+
+        .btn-purple {
+            background: var(--accent-purple);
+            box-shadow: 0 6px 20px rgba(168, 85, 247, 0.35);
+        }
+
+        .btn-emerald {
+            background: var(--accent-emerald);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.35);
+        }
+
+        .btn-blue {
+            background: var(--accent-blue);
+            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.35);
+        }
+
+        .btn-amber {
+            background: var(--accent-amber);
+            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.35);
+        }
+
+        /* DETECTION LOG AREA */
+        .logs-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 220px;
+        }
+
+        .log-area {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 16px;
+            padding: 1rem;
+            border: 1px solid var(--glass-border);
+            overflow-y: auto;
+            font-size: 0.9rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            max-height: 100%;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+        }
+
+        .log-entry {
+            padding: 0.5rem 0.6rem;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            font-size: 0.88rem;
+            line-height: 1.4;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-5px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .time {
+            color: #38bdf8;
+            font-weight: 600;
+            font-size: 0.78rem;
+            margin-right: 0.4rem;
+        }
+
+        /* MODAL STYLES */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid var(--glass-border-light);
+            padding: 2rem;
+            border-radius: 20px;
+            backdrop-filter: blur(24px);
+            text-align: center;
+            color: white;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6);
+        }
+
+        .modal h2 {
+            margin-top: 0;
+            font-size: 1.5rem;
+        }
+
+        .modal input {
+            padding: 0.9rem 1rem;
+            margin: 1.2rem 0;
+            width: 100%;
+            border-radius: 12px;
+            border: 1px solid var(--glass-border);
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 1rem;
+            font-family: inherit;
+            outline: none;
+        }
+
+        .modal input:focus {
+            border-color: #a855f7;
+            box-shadow: 0 0 15px rgba(168, 85, 247, 0.4);
+        }
+
+        /* VOICE MIC HUD BANNER */
+        .voice-hud-banner {
+            position: fixed;
+            top: 1.25rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(245, 158, 11, 0.6);
+            border-radius: 30px;
+            padding: 0.65rem 1.5rem;
+            color: #f8fafc;
+            font-size: 0.92rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            z-index: 100;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .voice-hud-banner:hover {
+            transform: translateX(-50%) translateY(-2px);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7);
+        }
+
+        .voice-hud-banner.active {
+            border-color: rgba(239, 68, 68, 0.8);
+            background: rgba(220, 38, 38, 0.25);
+            box-shadow: 0 0 25px rgba(239, 68, 68, 0.4);
+        }
+
+        .mic-dot {
+            width: 10px;
+            height: 10px;
+            background-color: #f59e0b;
+            border-radius: 50%;
+            box-shadow: 0 0 8px #f59e0b;
+            animation: pulse-mic 1.5s infinite;
+        }
+
+        .voice-hud-banner.active .mic-dot {
+            background-color: #ef4444;
+            box-shadow: 0 0 12px #ef4444;
+        }
+
+        @keyframes pulse-mic {
+            0% {
+                transform: scale(0.9);
+                opacity: 0.7;
+            }
+
+            50% {
+                transform: scale(1.2);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.9);
+                opacity: 0.7;
+            }
+        }
+
+        /* RESPONSIVE LAYOUT */
+        @media (max-width: 768px) {
+            .glass-panel-sidebar {
+                top: auto;
+                left: 1rem;
+                right: 1rem;
+                bottom: 1rem;
+                width: auto;
+                max-height: 50vh;
+            }
+
+            .depth-pip-container {
+                display: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- FULL WINDOW CAMERA FEED & DETECTIONS LAYER -->
+    <div class="viewport-container">
+        <video id="video-stream" autoplay playsinline muted></video>
+        <canvas id="overlay-canvas"></canvas>
+    </div>
+
+    <!-- VOICE MIC HUD BANNER -->
+    <div id="voice-hud" class="voice-hud-banner" onclick="toggleVoiceCommands()">
+        <span class="mic-dot"></span>
+        <span id="voice-hud-text">🎙️ Voice Mic Mode (Click to Activate)</span>
+    </div>
+
+    <!-- SCANNING INDICATOR -->
+    <div id="scanning-indicator" class="scanning-overlay">Scanning... Move head slightly</div>
+
+    <!-- FLOATING TOP LEFT HEADER -->
+    <div class="floating-header">
+        <div class="status-pulse"></div>
+        <div class="header-title-group">
+            <h1>Vision Assistant AI</h1>
+            <p>Live Mobile Camera Feed via WebSockets</p>
+        </div>
+    </div>
+
+    <!-- FLOATING DEPTH MAP THUMBNAIL (PIP) -->
+    <div class="depth-pip-container">
+        <div class="depth-pip-header">
+            <span>DEPTH VISION MAP</span>
+            <span
+                style="font-size: 0.7rem; background: rgba(56, 189, 248, 0.2); padding: 2px 6px; border-radius: 4px; color: #38bdf8;">HUD</span>
+        </div>
+        <div class="depth-pip-body">
+            <img id="depth-map-image" alt="Depth Map View">
+        </div>
+    </div>
+
+    <!-- FLOATING TRANSPARENT CONTROLS & LOG SIDEBAR -->
+    <div class="glass-panel-sidebar">
+        <!-- ACTIONS SECTION -->
+        <div class="actions-group">
+            <h3 class="panel-section-title">Quick Actions</h3>
+            <button class="btn-glass btn-purple" id="analyze-btn" onclick="toggleContinuousAnalysis()">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z">
+                    </path>
+                </svg>
+                <span id="analyze-btn-text">Enable Continuous Analysis</span>
+            </button>
+            <button class="btn-glass btn-emerald" onclick="startFaceScan()">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path
+                        d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z">
+                    </path>
+                </svg>
+                Register Face
+            </button>
+            <button class="btn-glass btn-blue" onclick="testAudio()">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path
+                        d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z">
+                    </path>
+                </svg>
+                Test Audio
+            </button>
+            <button class="btn-glass btn-amber" id="voice-cmd-btn" onclick="toggleVoiceCommands()">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z">
+                    </path>
+                </svg>
+                Enable Voice Commands
+            </button>
+        </div>
+
+        <!-- SPEECH CONTROLS SECTION -->
+        <div class="speech-controls-group"
+            style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); border-radius: 16px; padding: 1rem; display: flex; flex-direction: column; gap: 0.8rem;">
+            <h3 class="panel-section-title" style="margin: 0;">Speech Frequency & Controls</h3>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;">
+                <label style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted);"
+                    for="speech-rate-select">Speech Speed:</label>
+                <select id="speech-rate-select" onchange="updateSpeechRate(this.value)"
+                    style="background: rgba(15, 23, 42, 0.8); color: white; border: 1px solid var(--glass-border); border-radius: 8px; padding: 0.3rem 0.6rem; font-family: inherit; font-size: 0.85rem; outline: none; cursor: pointer;">
+                    <option value="0.8">Slow (0.8x)</option>
+                    <option value="1.0" selected>Normal (1.0x)</option>
+                    <option value="1.25">Fast (1.25x)</option>
+                    <option value="1.5">Very Fast (1.5x)</option>
+                    <option value="2.0">Ultra Fast (2.0x)</option>
+                </select>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;">
+                <label style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted);"
+                    for="speech-interval-select">Announcement Frequency:</label>
+                <select id="speech-interval-select" onchange="updateSpeechInterval(this.value)"
+                    style="background: rgba(15, 23, 42, 0.8); color: white; border: 1px solid var(--glass-border); border-radius: 8px; padding: 0.3rem 0.6rem; font-family: inherit; font-size: 0.85rem; outline: none; cursor: pointer;">
+                    <option value="3000">Frequent (3s)</option>
+                    <option value="4500" selected>Balanced (4.5s)</option>
+                    <option value="7000">Relaxed (7s)</option>
+                    <option value="10000">Slow (10s)</option>
+                </select>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 0.6rem; margin-top: 0.2rem;">
+                <input type="checkbox" id="skip-duplicate-speech" checked
+                    style="accent-color: #a855f7; width: 16px; height: 16px; cursor: pointer;">
+                <label for="skip-duplicate-speech"
+                    style="font-size: 0.82rem; color: var(--text-main); cursor: pointer; user-select: none;">Skip
+                    Repeating Identical Scene</label>
+            </div>
+        </div>
+
+        <!-- DETECTION LOG SECTION -->
+        <div class="logs-section">
+            <h3 class="panel-section-title">Detection Log</h3>
+            <div class="log-area" id="log-area">
+                <div class="log-entry"><span class="time">System</span> Awaiting camera permissions...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- REGISTRATION MODAL -->
+    <div id="name-modal" class="modal">
+        <div class="modal-content">
+            <h2>Register Face</h2>
+            <p style="color: var(--text-muted); font-size: 0.95rem;">Face scan complete. Who is this person?</p>
+            <input type="text" id="person-name" placeholder="Enter full name">
+            <button class="btn-glass btn-purple" onclick="submitFaceScan()">Save Face</button>
+            <button class="btn-glass" onclick="closeModal()"
+                style="background: rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.4); margin-top: 10px;">Cancel</button>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video-stream');
+        const canvas = document.getElementById('overlay-canvas');
+        const ctx = canvas.getContext('2d');
+        let ws;
+        let lastDetections = [];
+        let recognition = null;
+        let voiceActive = false;
+
+        function addLog(message) {
+            const logArea = document.getElementById('log-area');
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="time">${time}</span> ${message}`;
+            logArea.prepend(entry);
+        }
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+                });
+                video.srcObject = stream;
+
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    addLog("Camera started successfully.");
+                    connectWebSocket();
+                };
+            } catch (err) {
+                addLog("Error accessing camera: " + err.message);
+            }
+        }
+
+        let reconnectDelay = 500;
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws/detect`);
+
+            ws.onopen = () => {
+                reconnectDelay = 500;
+                addLog("Connected to AI Detection Server.");
+                sendFrame();
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.depth_map) {
+                    const depthImg = document.getElementById('depth-map-image');
+                    depthImg.src = 'data:image/jpeg;base64,' + data.depth_map;
+                }
+
+                drawDetections(data.detections, data.distance);
+                requestAnimationFrame(sendFrame);
+            };
+
+            ws.onclose = () => {
+                addLog(`Connection paused. Reconnecting in ${reconnectDelay}ms...`);
+                setTimeout(() => {
+                    connectWebSocket();
+                    reconnectDelay = Math.min(reconnectDelay * 1.5, 3000);
+                }, reconnectDelay);
+            };
+
+            ws.onerror = () => {
+                if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+            };
+        }
+
+        const captureCanvas = document.createElement('canvas');
+        const captureCtx = captureCanvas.getContext('2d');
+
+        function sendFrame() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                captureCanvas.width = video.videoWidth;
+                captureCanvas.height = video.videoHeight;
+                captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+
+                captureCanvas.toBlob(blob => {
+                    if (blob && ws.readyState === WebSocket.OPEN) ws.send(blob);
+                }, 'image/jpeg', 0.45);
+            } else {
+                requestAnimationFrame(sendFrame);
+            }
+        }
+
+        const smoothedBoxes = {};
+
+        function drawDetections(detections, distances) {
+            lastDetections = detections || [];
+            distances = distances || [];
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const alpha = 0.55; // Lerp smoothing factor for smooth motion tracking
+            const activeKeys = new Set();
+
+            for (let det of lastDetections) {
+                const key = det.class_name + "_" + Math.round(det.box[0] / 40);
+                activeKeys.add(key);
+
+                let [x1, y1, x2, y2] = det.box;
+
+                if (smoothedBoxes[key]) {
+                    const prev = smoothedBoxes[key];
+                    x1 = prev[0] + (x1 - prev[0]) * alpha;
+                    y1 = prev[1] + (y1 - prev[1]) * alpha;
+                    x2 = prev[2] + (x2 - prev[2]) * alpha;
+                    y2 = prev[3] + (y2 - prev[3]) * alpha;
+                }
+                smoothedBoxes[key] = [x1, y1, x2, y2];
+
+                ctx.strokeStyle = '#38bdf8';
+                ctx.lineWidth = 4;
+                ctx.shadowColor = 'rgba(56, 189, 248, 0.5)';
+                ctx.shadowBlur = 8;
+                ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                ctx.shadowBlur = 0; // Reset blur
+
+                ctx.fillStyle = '#38bdf8';
+                ctx.font = 'bold 22px Outfit, sans-serif';
+                let text = `${det.class_name} ${(det.confidence * 100).toFixed(0)}%`;
+
+                const distData = distances.find(d =>
+                    d.object === det.class_name &&
+                    Math.abs(d.box[0] - det.box[0]) < 40
+                );
+
+                if (distData) {
+                    text += ` - ${distData.distance}`;
+                }
+
+                ctx.fillText(text, x1, y1 > 28 ? y1 - 10 : 28);
+            }
+
+            // Clean up keys for objects no longer present
+            for (let k in smoothedBoxes) {
+                if (!activeKeys.has(k)) delete smoothedBoxes[k];
+            }
+        }
+
+        let currentSpeechRate = 1.0;
+        let speechIntervalMs = 4500;
+        let lastSpokenText = "";
+
+        function updateSpeechRate(val) {
+            currentSpeechRate = parseFloat(val);
+            addLog(`Speech rate set to ${currentSpeechRate}x`);
+            speakTTS(`Speech speed set to ${currentSpeechRate}x`, true);
+        }
+
+        function updateSpeechInterval(val) {
+            speechIntervalMs = parseInt(val);
+            addLog(`Speech frequency set to ${speechIntervalMs / 1000} seconds`);
+        }
+
+        function speakTTS(text, force = false) {
+            const skipDuplicates = document.getElementById('skip-duplicate-speech')?.checked;
+            if (!force && skipDuplicates && text === lastSpokenText) {
+                return; // Skip repeating identical speech
+            }
+            lastSpokenText = text;
+
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel(); // Stop any active speech
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = currentSpeechRate;
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        let isContinuousAnalyzing = false;
+        let analyzeTimer = null;
+        let isAnalyzingInProgress = false;
+
+        function toggleContinuousAnalysis() {
+            if (!isContinuousAnalyzing) {
+                startContinuousAnalysis();
+            } else {
+                stopContinuousAnalysis();
+            }
+        }
+
+        function startContinuousAnalysis() {
+            isContinuousAnalyzing = true;
+            const btn = document.getElementById('analyze-btn');
+            if (btn) {
+                btn.style.background = 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
+                btn.style.boxShadow = '0 6px 20px rgba(239, 68, 68, 0.4)';
+                btn.innerHTML = `
+                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+                        <rect x="9" y="9" width="6" height="6" fill="currentColor"/>
+                    </svg>
+                    <span id="analyze-btn-text">Analyzing Continuously... (Click to Stop)</span>
+                `;
+            }
+            addLog("Continuous scene analysis ENABLED.");
+            speakTTS("Continuous scene analysis enabled.", true);
+            runAnalysisLoop();
+        }
+
+        function stopContinuousAnalysis() {
+            isContinuousAnalyzing = false;
+            if (analyzeTimer) {
+                clearTimeout(analyzeTimer);
+                analyzeTimer = null;
+            }
+            const btn = document.getElementById('analyze-btn');
+            if (btn) {
+                btn.style.background = 'var(--accent-purple)';
+                btn.style.boxShadow = '0 6px 20px rgba(168, 85, 247, 0.35)';
+                btn.innerHTML = `
+                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"></path></svg>
+                    <span id="analyze-btn-text">Enable Continuous Analysis</span>
+                `;
+            }
+            addLog("Continuous scene analysis DISABLED.");
+            speakTTS("Continuous scene analysis disabled.", true);
+        }
+
+        async function runAnalysisLoop() {
+            if (!isContinuousAnalyzing) return;
+
+            await analyzeScene(true);
+
+            if (isContinuousAnalyzing) {
+                // Wait user-selected interval between analysis passes
+                analyzeTimer = setTimeout(runAnalysisLoop, speechIntervalMs);
+            }
+        }
+
+        async function analyzeScene(isContinuous = false) {
+            if (isAnalyzingInProgress) return;
+            isAnalyzingInProgress = true;
+
+            try {
+                if (!isContinuous) {
+                    addLog("Generating scene description...");
+                    speakTTS("Analyzing scene now...");
+                } else {
+                    addLog("Continuously analyzing scene...");
+                }
+
+                const response = await fetch('/api/describe_scene');
+                const result = await response.json();
+
+                if (result.success) {
+                    addLog(`Description: ${result.description}`);
+                    speakTTS(result.description);
+                } else {
+                    addLog(`Error: ${result.description}`);
+                    if (!isContinuous) {
+                        speakTTS("Could not analyze scene. " + (result.description || "Try again."));
+                    }
+                }
+            } catch (err) {
+                addLog(`Request failed: ${err.message}`);
+                if (!isContinuous) {
+                    speakTTS("Request failed. Please try again.");
+                }
+            } finally {
+                isAnalyzingInProgress = false;
+            }
+        }
+
+        async function testAudio() {
+            addLog("Testing audio playback...");
+            speakTTS("Audio system is working perfectly.");
+            fetch('/audio/speak?text=Audio system is working perfectly');
+        }
+
+        function safeStartRecognition() {
+            if (!recognition) return;
+            try {
+                recognition.start();
+            } catch (err) {
+                // Retry if browser speech engine is busy or restarting
+                if (voiceActive) {
+                    setTimeout(() => {
+                        try { recognition.start(); } catch (e) { }
+                    }, 400);
+                }
+            }
+        }
+
+        function speakDetectedText() {
+            const texts = lastDetections.filter(d => d.class_name && d.class_name.startsWith('"'));
+            if (texts.length === 0) {
+                speakTTS("No text detected in view.");
+                addLog("Voice: No text detected.");
+            } else {
+                const textList = texts.map(t => t.class_name.replace(/"/g, '')).join(', ');
+                const message = `Text detected: ${textList}`;
+                speakTTS(message);
+                addLog(`Voice: ${message}`);
+            }
+        }
+
+        function speakDetectedObjects() {
+            const objects = lastDetections.filter(d => d.class_name && !d.class_name.startsWith('"') && !d.class_name.startsWith('Face:'));
+            if (objects.length === 0) {
+                speakTTS("No objects detected nearby.");
+                addLog("Voice: No objects detected.");
+            } else {
+                const counts = {};
+                objects.forEach(o => {
+                    counts[o.class_name] = (counts[o.class_name] || 0) + 1;
+                });
+                const summary = Object.entries(counts).map(([name, count]) => `${count} ${name}${count > 1 ? 's' : ''}`).join(', ');
+                const message = `Objects in view: ${summary}.`;
+                speakTTS(message);
+                addLog(`Voice: ${message}`);
+            }
+        }
+
+        function speakDetectedFaces() {
+            const faces = lastDetections.filter(d => d.class_name && d.class_name.startsWith('Face:'));
+            if (faces.length === 0) {
+                speakTTS("No faces recognized.");
+                addLog("Voice: No faces recognized.");
+            } else {
+                const names = faces.map(f => f.class_name.replace('Face:', '').trim()).join(', ');
+                const message = `People recognized: ${names}.`;
+                speakTTS(message);
+                addLog(`Voice: ${message}`);
+            }
+        }
+
+        async function askVoiceQuestion(questionText) {
+            addLog(`Analyzing Question: "${questionText}"...`);
+            speakTTS("Analyzing your question...");
+            try {
+                const res = await fetch(`/api/ask_question?q=${encodeURIComponent(questionText)}`);
+                const data = await res.json();
+                if (data.answer) {
+                    addLog(`AI Answer: ${data.answer}`);
+                    speakTTS(data.answer);
+                } else {
+                    addLog("Could not generate answer for question.");
+                }
+            } catch (err) {
+                addLog(`Question error: ${err.message}`);
+                speakTTS("Sorry, I could not answer that question right now.");
+            }
+        }
+
+        function speakVoiceHelp() {
+            const helpText = "You can ask any question about what is in front of you. For example: 'What do you see?', 'Read text', 'Where is the bottle?', 'Is the path clear?', or 'Who is here?'.";
+            speakTTS(helpText);
+            addLog("Voice: Spoke command help list.");
+        }
+
+        function toggleVoiceCommands() {
+            if (!voiceActive) {
+                startVoiceCommands();
+            } else {
+                stopVoiceCommands();
+            }
+        }
+
+        function startVoiceCommands() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+            if (!SpeechRecognition) {
+                addLog("Voice recognition not supported in this browser.");
+                speakTTS("Voice recognition is not supported in this browser.");
+                return;
+            }
+
+            voiceActive = true;
+
+            const btn = document.getElementById('voice-cmd-btn');
+            if (btn) {
+                btn.style.background = 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
+                btn.style.boxShadow = '0 6px 20px rgba(239, 68, 68, 0.4)';
+                btn.innerHTML = `
+                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+                        <rect x="9" y="9" width="6" height="6" fill="currentColor"/>
+                    </svg>
+                    <span id="voice-btn-text">Listening Voice Commands... (Click to Stop)</span>
+                `;
+            }
+
+            const hud = document.getElementById('voice-hud');
+            const hudText = document.getElementById('voice-hud-text');
+            if (hud) hud.classList.add('active');
+            if (hudText) hudText.innerText = "🎙️ Voice Mic Active — Speak anytime!";
+
+            if (!recognition) {
+                recognition = new SpeechRecognition();
+                recognition.continuous = true;
+                recognition.interimResults = false;
+                recognition.lang = 'en-US';
+
+                recognition.onstart = () => {
+                    addLog("Voice assistant actively listening.");
+                };
+
+                recognition.onresult = (event) => {
+                    const lastIndex = event.results.length - 1;
+                    const command = event.results[lastIndex][0].transcript.trim().toLowerCase();
+                    addLog(`Voice Question: "${command}"`);
+
+                    if (command.includes('read') || command.includes('text') || command.includes('sign') || command.includes('writing') || command.includes('book') || command.includes('words')) {
+                        speakDetectedText();
+                    }
+                    else if (command.includes('who') || command.includes('person') || command.includes('people') || command.includes('face') || command.includes('friend')) {
+                        speakDetectedFaces();
+                    }
+                    else if (command.includes('help') || command.includes('command') || command.includes('option') || command.includes('what can i say')) {
+                        speakVoiceHelp();
+                    }
+                    else if (command.includes('stop') || command.includes('disable') || command.includes('turn off') || command.includes('pause')) {
+                        if (command.includes('analyse') || command.includes('analyze') || command.includes('analysis') || command.includes('scene')) {
+                            stopContinuousAnalysis();
+                        } else if (command.includes('voice')) {
+                            stopVoiceCommands();
+                        }
+                    }
+                    else if (command.includes('start') || command.includes('enable')) {
+                        if (command.includes('analyse') || command.includes('analyze') || command.includes('analysis') || command.includes('scene')) {
+                            if (!isContinuousAnalyzing) startContinuousAnalysis();
+                        }
+                    }
+                    else if (command.includes('register') || command.includes('scan face') || command.includes('save face') || command.includes('new face')) {
+                        startFaceScan();
+                    }
+                    else if (command.includes('test') || command.includes('audio') || command.includes('sound') || command.includes('check')) {
+                        testAudio();
+                    }
+                    else {
+                        // Spoken voice question is analyzed against the live camera scene!
+                        askVoiceQuestion(command);
+                    }
+                };
+
+                recognition.onerror = (e) => {
+                    if (e.error !== 'no-speech' && e.error !== 'aborted') {
+                        addLog("Voice notice: " + e.error);
+                    }
+                    if (voiceActive) {
+                        setTimeout(() => {
+                            if (voiceActive && recognition) {
+                                try { recognition.start(); } catch (err) { }
+                            }
+                        }, 400);
+                    }
+                };
+
+                recognition.onend = () => {
+                    if (voiceActive) {
+                        setTimeout(() => {
+                            if (voiceActive && recognition) {
+                                try { recognition.start(); } catch (err) { }
+                            }
+                        }, 300);
+                    }
+                };
+            }
+
+            try {
+                recognition.start();
+            } catch (e) {
+                safeStartRecognition();
+            }
+
+            addLog("Voice commands ENABLED.");
+            speakTTS("Voice commands enabled. Listening for your command.");
+        }
+
+        function stopVoiceCommands() {
+            voiceActive = false;
+            if (recognition) {
+                try { recognition.stop(); } catch (e) { }
+            }
+
+            const btn = document.getElementById('voice-cmd-btn');
+            if (btn) {
+                btn.style.background = 'var(--accent-amber)';
+                btn.style.boxShadow = '0 6px 20px rgba(245, 158, 11, 0.35)';
+                btn.innerHTML = `
+                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"></path></svg>
+                    <span id="voice-btn-text">Enable Voice Commands</span>
+                `;
+            }
+
+            const hud = document.getElementById('voice-hud');
+            const hudText = document.getElementById('voice-hud-text');
+            if (hud) hud.classList.remove('active');
+            if (hudText) hudText.innerText = "🎙️ Voice Mic Mode (Click to Activate)";
+
+            addLog("Voice commands DISABLED.");
+            speakTTS("Voice commands disabled.");
+        }
+
+        let isScanning = false;
+        let scannedFrames = [];
+        let scanInterval;
+
+        function startFaceScan() {
+            if (isScanning) return;
+
+            isScanning = true;
+            scannedFrames = [];
+            addLog("Scanning face... Move head slightly.");
+            speakTTS("Starting face scan. Move your head slightly.");
+            document.getElementById('scanning-indicator').style.display = 'block';
+
+            let scanCount = 0;
+            const maxScans = 5;
+
+            scanInterval = setInterval(() => {
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    captureCanvas.width = video.videoWidth;
+                    captureCanvas.height = video.videoHeight;
+                    captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+
+                    captureCanvas.toBlob(blob => {
+                        if (blob) {
+                            scannedFrames.push(blob);
+                            scanCount++;
+                            addLog(`Captured frame ${scanCount}/${maxScans}`);
+
+                            if (scanCount >= maxScans) {
+                                finishScan();
+                            }
+                        }
+                    }, 'image/jpeg', 0.8);
+                }
+            }, 500);
+        }
+
+        function finishScan() {
+            clearInterval(scanInterval);
+            isScanning = false;
+            document.getElementById('scanning-indicator').style.display = 'none';
+            document.getElementById('name-modal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('name-modal').style.display = 'none';
+            scannedFrames = [];
+            document.getElementById('person-name').value = '';
+            addLog("Face registration cancelled.");
+        }
+
+        async function submitFaceScan() {
+            const nameInput = document.getElementById('person-name').value.trim();
+            if (!nameInput) {
+                alert("Please enter a name.");
+                return;
+            }
+
+            document.getElementById('name-modal').style.display = 'none';
+            addLog(`Submitting face registration for ${nameInput}...`);
+
+            const formData = new FormData();
+            formData.append('name', nameInput);
+
+            scannedFrames.forEach((blob, index) => {
+                formData.append('files', blob, `frame_${index}.jpg`);
+            });
+
+            try {
+                const response = await fetch('/api/register_face_multi', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    addLog(`Success: ${result.message}`);
+                } else {
+                    addLog(`Error: ${result.message}`);
+                }
+            } catch (err) {
+                addLog(`Upload error: ${err.message}`);
+            }
+
+            scannedFrames = [];
+            document.getElementById('person-name').value = '';
+        }
+
+        // Initialize
+        startCamera();
+    </script>
+</body>
+
+</html>
