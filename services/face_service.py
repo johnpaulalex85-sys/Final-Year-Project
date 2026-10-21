@@ -3,6 +3,7 @@ import json
 import logging
 import numpy as np
 from insightface.app import FaceAnalysis
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -11,10 +12,13 @@ class FaceService:
         self.db_path = db_path
         self.database = {}
         
-        logger.info("Loading InsightFace model...")
+        ctx_id = 0 if settings.DEVICE == "cuda" else -1
+        det_size = (640, 640) if settings.DEVICE == "cuda" else (320, 320)
+        
+        logger.info(f"Loading InsightFace model (ctx_id={ctx_id}, det_size={det_size})...")
         try:
-            self.app = FaceAnalysis(name="buffalo_l")
-            self.app.prepare(ctx_id=0, det_size=(640, 640))
+            self.app = FaceAnalysis(name="buffalo_l", providers=['CPUExecutionProvider'] if ctx_id == -1 else None)
+            self.app.prepare(ctx_id=ctx_id, det_size=det_size)
             logger.info("InsightFace model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to load InsightFace model: {e}")
@@ -67,16 +71,13 @@ class FaceService:
         for frame in frames:
             faces = self.app.get(frame)
             if faces:
-                # Get largest face in this frame
                 largest_face = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0]) * (f.bbox[3]-f.bbox[1]))
                 embeddings.append(largest_face.embedding)
 
         if not embeddings:
             return False, "No face detected in any of the provided images"
 
-        # Average the embeddings
         avg_embedding = np.mean(embeddings, axis=0)
-        # Re-normalize to length 1
         norm = np.linalg.norm(avg_embedding)
         if norm > 0:
             avg_embedding = avg_embedding / norm
@@ -86,7 +87,7 @@ class FaceService:
         return True, f"Face registered for {name} with {len(embeddings)} angles"
 
     def recognize_face(self, frame: np.ndarray, threshold: float = 0.6):
-        if self.app is None:
+        if self.app is None or frame is None or frame.size == 0:
             return {"faces": []}
 
         try:

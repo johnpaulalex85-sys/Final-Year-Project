@@ -1,15 +1,22 @@
 import logging
+import time
+import os
+import torch
+import numpy as np
+from typing import List, Dict, Any, Optional
+
 try:
     from ultralytics import YOLOWorld
 except Exception:
     from ultralytics import YOLO as YOLOWorld
 from ultralytics import YOLO
-import numpy as np
-import threading
-import time
+
+from config import settings
+from services.tracker import WalkingObjectTracker
 
 logger = logging.getLogger(__name__)
 
+# Complete historical class list preserved for 100% backwards compatibility
 DEFAULT_CUSTOM_CLASSES = [
     # People and body-related objects
     "person", "child", "adult", "elderly person",
@@ -126,75 +133,167 @@ DEFAULT_CUSTOM_CLASSES = [
     "ticket counter", "security desk",
 ]
 
+# High-priority curated walking hazard classes for high-speed YOLO-World execution
+STREAMLINED_WALKING_CLASSES = [
+    "person", "pedestrian", "car", "bus", "truck", "motorcycle", "bicycle",
+    "staircase", "stairs", "step", "curb", "pothole", "obstacle",
+    "pole", "tree", "door", "wall", "chair", "table", "dustbin",
+    "traffic light", "pedestrian crossing", "dog", "wet floor", "road barrier"
+]
+
 class ObjectDetector:
-    def __init__(self, model_name="yolov8s-worldv2.pt", custom_classes=None):
-        logger.info(f"Loading YOLO-World model {model_name}...")
-        if custom_classes is None:
-            custom_classes = DEFAULT_CUSTOM_CLASSES
-        self.custom_classes = custom_classes
+    def __init__(
+        self,
+        model_name: Optional[str] = None,
+        custom_classes: Optional[List[str]] = None,
+        imgsz: Optional[int] = None,
+        device: Optional[str] = None
+    ):
+        self.model_name = model_name or settings.YOLO_MODEL_PATH
+        self.imgsz = imgsz or settings.YOLO_IMGSZ
+        self.device = device or settings.DEVICE
+        self.is_world_model = "world" in self.model_name.lower()
+        
+        # Determine active classes
+        if custom_classes is not None:
+            self.custom_classes = custom_classes
+        elif self.is_world_model:
+            if settings.YOLO_STREAMLINED_CLASSES:
+                self.custom_classes = STREAMLINED_WALKING_CLASSES
+            else:
+                self.custom_classes = DEFAULT_CUSTOM_CLASSES
+        else:
+            self.custom_classes = None
 
+        logger.info(f"Initializing ObjectDetector with model '{self.model_name}' on device '{self.device}'...")
+        t0 = time.time()
+        
         try:
-            try:
-                self.model = YOLOWorld(model_name)
-            except Exception:
-                self.model = YOLO(model_name)
+            if self.is_world_model:
+                try:
+                    self.model = YOLOWorld(self.model_name)
+                except Exception:
+                    self.model = YOLO(self.model_name)
+                if self.custom_classes and hasattr(self.model, "set_classes"):
+                    self.model.set_classes(self.custom_classes)
+                    logger.info(f"YOLO-World set_classes configured ({len(self.custom_classes)} classes).")
+            else:
+                self.model = YOLO(self.model_name)
 
-            if hasattr(self.model, "set_classes"):
-                self.model.set_classes(self.custom_classes)
-
-            logger.info(f"YOLO-World loaded successfully with classes: {self.custom_classes}")
+            load_time = time.time() - t0
+            logger.info(f"YOLO model loaded successfully in {load_time:.2f}s.")
         except Exception as e:
-            logger.error(f"Failed to load YOLO-World model: {e}")
+            logger.error(f"Failed to load YOLO model: {e}")
             self.model = None
+
+        # Lightweight object tracker
+        self.tracker = WalkingObjectTracker(
+            max_lost=settings.TRACK_MAX_LOST,
+            iou_threshold=settings.TRACK_IOU_THRESHOLD,
+            smoothing_alpha=settings.TRACK_SMOOTHING_ALPHA
+        ) if settings.TRACKING_ENABLED else None
+
+        # Perform warm-up inference if enabled
+        if self.model and settings.YOLO_WARMUP:
+            self._warmup()
 
         self.latest_detections = []
         self.running = False
         self.thread = None
         self.camera_manager = None
 
-    def set_custom_classes(self, classes: list):
-        """Dynamically update the active detectable classes at runtime."""
+    def _warmup(self):
+        """Runs a synthetic dummy frame through the model to prime JIT kernels."""
+        try:
+            t0 = time.perf_counter()
+            dummy = np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8)
+            with torch.inference_mode():
+                _ = self.model.predict(
+                    source=dummy,
+                    imgsz=self.imgsz,
+                    conf=0.5,
+                    device=self.device,
+                    verbose=False
+                )
+            warmup_ms = (time.perf_counter() - t0) * 1000
+            logger.info(f"YOLO warmup completed in {warmup_ms:.1f}ms.")
+        except Exception as e:
+            logger.warning(f"YOLO warmup warning: {e}")
+
+    def set_custom_classes(self, classes: List[str]):
+        """Dynamically update detectable classes at runtime (YOLO-World only)."""
         self.custom_classes = classes
         if self.model and hasattr(self.model, "set_classes"):
             try:
+                t0 = time.time()
                 self.model.set_classes(classes)
-                logger.info(f"Updated YOLO-World classes to: {classes}")
+                logger.info(f"Updated YOLO-World classes ({len(classes)} classes) in {time.time()-t0:.2f}s.")
             except Exception as e:
                 logger.error(f"Failed to update YOLO-World classes: {e}")
 
-    def detect(self, frame: np.ndarray, conf_threshold: float = 0.45):
-        if self.model is None:
+    def detect(
+        self,
+        frame: np.ndarray,
+        conf_threshold: Optional[float] = None,
+        enable_tracking: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Runs high-speed object detection on the input frame.
+        Applies non-blocking inference mode, custom thresholds, and temporal tracking.
+        """
+        if self.model is None or frame is None or frame.size == 0:
             return []
-            
+
+        conf = conf_threshold if conf_threshold is not None else settings.YOLO_CONF
+        iou = settings.YOLO_IOU
+
         try:
-            # Resize internal prediction matrix for fast CPU execution (~30ms)
-            results = self.model.predict(source=frame, imgsz=384, conf=conf_threshold, verbose=False)
+            with torch.inference_mode():
+                results = self.model.predict(
+                    source=frame,
+                    imgsz=self.imgsz,
+                    conf=conf,
+                    iou=iou,
+                    device=self.device,
+                    verbose=False
+                )
         except Exception as e:
             logger.error(f"YOLO predict error: {e}")
             return []
 
-        detections = []
+        raw_detections = []
         if len(results) > 0:
             result = results[0]
             for box in result.boxes:
                 xyxy = box.xyxy[0].cpu().numpy().tolist()
-                conf = box.conf[0].item()
+                b_conf = float(box.conf[0].item())
                 cls_id = int(box.cls[0].item())
                 cls_name = result.names[cls_id]
-                
-                detections.append({
-                    "box": [round(x, 2) for x in xyxy],
-                    "confidence": round(conf, 3),
+
+                raw_detections.append({
+                    "box": [round(float(x), 1) for x in xyxy],
+                    "confidence": round(b_conf, 3),
                     "class_name": cls_name
                 })
-                
-        return detections
 
-    def start_live_loop(self, camera_manager, conf_threshold=0.4):
-        """Continuously process frames in a background thread."""
-        if self.running: return
+        # Apply temporal tracking if enabled
+        if enable_tracking and self.tracker is not None:
+            tracked_detections = self.tracker.update(raw_detections)
+            return tracked_detections
+
+        return raw_detections
+
+    def reset_tracker(self):
+        if self.tracker:
+            self.tracker.reset()
+
+    def start_live_loop(self, camera_manager, conf_threshold: Optional[float] = None):
+        """Continuously process camera frames in a background worker thread."""
+        if self.running:
+            return
         self.camera_manager = camera_manager
         self.running = True
+        import threading
         self.thread = threading.Thread(target=self._loop, args=(conf_threshold,), daemon=True)
         self.thread.start()
         logger.info("Live YOLO detection loop started.")
@@ -204,11 +303,9 @@ class ObjectDetector:
             if self.camera_manager:
                 frame = self.camera_manager.get_frame()
                 if frame is not None:
-                    # Run detection and store the results instantly
                     dets = self.detect(frame, conf_threshold)
                     self.latest_detections = dets
-            # Run at roughly ~20 FPS max to conserve CPU
-            time.sleep(0.05) 
+            time.sleep(1.0 / max(1, settings.TARGET_FPS))
 
     def stop_live_loop(self):
         self.running = False

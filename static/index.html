@@ -84,6 +84,51 @@
             gap: 0.8rem;
         }
 
+        /* REAL-TIME TELEMETRY HUD BAR */
+        .telemetry-hud {
+            position: fixed;
+            top: 1.25rem;
+            right: 1.25rem;
+            z-index: 10;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 0.6rem 1.1rem;
+            display: flex;
+            align-items: center;
+            gap: 1.2rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+        }
+
+        .hud-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+
+        .hud-label {
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .hud-val {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #38bdf8;
+            font-family: monospace, sans-serif;
+        }
+
+        .hud-val.alert-active {
+            color: #ef4444;
+            animation: pulse 1s infinite;
+        }
+
         .status-pulse {
             width: 10px;
             height: 10px;
@@ -501,7 +546,31 @@
         <div class="status-pulse"></div>
         <div class="header-title-group">
             <h1>Vision Assistant AI</h1>
-            <p>Live Mobile Camera Feed via WebSockets</p>
+            <p>Live Walking Safety & Detection Feed</p>
+        </div>
+    </div>
+
+    <!-- REAL-TIME TELEMETRY HUD -->
+    <div class="telemetry-hud" id="telemetry-hud">
+        <div class="hud-item">
+            <span class="hud-label">Inference FPS</span>
+            <span class="hud-val" id="hud-fps">--</span>
+        </div>
+        <div class="hud-item">
+            <span class="hud-label">Inference</span>
+            <span class="hud-val" id="hud-infer">-- ms</span>
+        </div>
+        <div class="hud-item">
+            <span class="hud-label">End-to-End</span>
+            <span class="hud-val" id="hud-latency">-- ms</span>
+        </div>
+        <div class="hud-item">
+            <span class="hud-label">Dropped</span>
+            <span class="hud-val" id="hud-dropped">0</span>
+        </div>
+        <div class="hud-item">
+            <span class="hud-label">Hazards</span>
+            <span class="hud-val" id="hud-hazards">Clear</span>
         </div>
     </div>
 
@@ -622,6 +691,8 @@
         let lastDetections = [];
         let recognition = null;
         let voiceActive = false;
+        let isFrameInFlight = false;
+        let lastFrameSentTime = 0;
 
         function addLog(message) {
             const logArea = document.getElementById('log-area');
@@ -634,15 +705,16 @@
 
         async function startCamera() {
             try {
+                // Responsive camera configuration (640x480 for optimal CPU inference speed)
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+                    video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } }
                 });
                 video.srcObject = stream;
 
                 video.onloadedmetadata = () => {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    addLog("Camera started successfully.");
+                    canvas.width = video.videoWidth || 640;
+                    canvas.height = video.videoHeight || 480;
+                    addLog(`Camera started (${canvas.width}x${canvas.height}).`);
                     connectWebSocket();
                 };
             } catch (err) {
@@ -658,23 +730,62 @@
 
             ws.onopen = () => {
                 reconnectDelay = 500;
-                addLog("Connected to AI Detection Server.");
+                isFrameInFlight = false;
+                addLog("Connected to Optimized AI Detection Server.");
                 sendFrame();
             };
 
             ws.onmessage = (event) => {
+                const now = performance.now();
+                const roundTripLatency = lastFrameSentTime > 0 ? (now - lastFrameSentTime) : 0;
+                isFrameInFlight = false;
+
                 const data = JSON.parse(event.data);
+
+                // Update Real-Time Telemetry HUD
+                if (document.getElementById('hud-fps')) {
+                    document.getElementById('hud-fps').innerText = data.processed_fps ? `${data.processed_fps}` : '--';
+                }
+                if (document.getElementById('hud-infer')) {
+                    document.getElementById('hud-infer').innerText = data.inference_time_ms ? `${data.inference_time_ms}ms` : '--';
+                }
+                if (document.getElementById('hud-latency')) {
+                    document.getElementById('hud-latency').innerText = roundTripLatency > 0 ? `${Math.round(roundTripLatency)}ms` : '--';
+                }
+                if (document.getElementById('hud-dropped')) {
+                    document.getElementById('hud-dropped').innerText = data.dropped_frames || 0;
+                }
+                if (document.getElementById('hud-hazards')) {
+                    const hCount = data.hazards ? data.hazards.length : 0;
+                    const hEl = document.getElementById('hud-hazards');
+                    if (data.is_urgent) {
+                        hEl.innerText = `⚠️ ${hCount} Urgent`;
+                        hEl.className = 'hud-val alert-active';
+                    } else if (hCount > 0) {
+                        hEl.innerText = `${hCount} in Path`;
+                        hEl.className = 'hud-val';
+                    } else {
+                        hEl.innerText = 'Clear';
+                        hEl.className = 'hud-val';
+                    }
+                }
+
+                // Handle Proactive Walking Hazard Audio Alerts
+                if (data.hazard_alert) {
+                    handleHazardAlert(data.hazard_alert, data.is_urgent);
+                }
 
                 if (data.depth_map) {
                     const depthImg = document.getElementById('depth-map-image');
-                    depthImg.src = 'data:image/jpeg;base64,' + data.depth_map;
+                    if (depthImg) depthImg.src = 'data:image/jpeg;base64,' + data.depth_map;
                 }
 
-                drawDetections(data.detections, data.distance);
+                drawDetections(data.detections, data.distance, data.hazards, data.corridor);
                 requestAnimationFrame(sendFrame);
             };
 
             ws.onclose = () => {
+                isFrameInFlight = false;
                 addLog(`Connection paused. Reconnecting in ${reconnectDelay}ms...`);
                 setTimeout(() => {
                     connectWebSocket();
@@ -692,32 +803,78 @@
 
         function sendFrame() {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            if (isFrameInFlight) return; // Prevent client frame backlog
 
             if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                captureCanvas.width = video.videoWidth;
-                captureCanvas.height = video.videoHeight;
+                captureCanvas.width = video.videoWidth || 640;
+                captureCanvas.height = video.videoHeight || 480;
                 captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
 
+                isFrameInFlight = true;
+                lastFrameSentTime = performance.now();
+
                 captureCanvas.toBlob(blob => {
-                    if (blob && ws.readyState === WebSocket.OPEN) ws.send(blob);
-                }, 'image/jpeg', 0.45);
+                    if (blob && ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(blob);
+                    } else {
+                        isFrameInFlight = false;
+                    }
+                }, 'image/jpeg', 0.50);
             } else {
                 requestAnimationFrame(sendFrame);
             }
         }
 
+        function handleHazardAlert(alertText, isUrgent) {
+            addLog(`⚠️ [Hazard Alert] ${alertText}`);
+            speakTTS(alertText, isUrgent);
+        }
+
         const smoothedBoxes = {};
 
-        function drawDetections(detections, distances) {
+        function drawDetections(detections, distances, hazards, corridor) {
             lastDetections = detections || [];
             distances = distances || [];
+            hazards = hazards || [];
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            const alpha = 0.55; // Lerp smoothing factor for smooth motion tracking
+            // 1. Draw Subtle Walking Corridor Guides
+            if (corridor && corridor.x_min && corridor.x_max) {
+                ctx.save();
+                ctx.setLineDash([6, 6]);
+                ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+                ctx.lineWidth = 2;
+
+                ctx.beginPath();
+                ctx.moveTo(corridor.x_min, 0);
+                ctx.lineTo(corridor.x_min, canvas.height);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(corridor.x_max, 0);
+                ctx.lineTo(corridor.x_max, canvas.height);
+                ctx.stroke();
+
+                // Corridor label at bottom
+                ctx.fillStyle = 'rgba(56, 189, 248, 0.4)';
+                ctx.font = '12px Outfit, sans-serif';
+                ctx.fillText("WALKING CORRIDOR", (corridor.x_min + corridor.x_max) / 2 - 55, canvas.height - 12);
+                ctx.restore();
+            }
+
+            const alpha = 0.65; // Smoothing factor
             const activeKeys = new Set();
 
+            // Set of urgent track IDs
+            const urgentSet = new Set(hazards.filter(h => h.is_urgent).map(h => h.track_id));
+            const hazardMap = new Map();
+            hazards.forEach(h => {
+                if (h.track_id) hazardMap.set(h.track_id, h);
+            });
+
             for (let det of lastDetections) {
-                const key = det.class_name + "_" + Math.round(det.box[0] / 40);
+                const trackId = det.track_id;
+                const key = trackId ? `trk_${trackId}` : (det.class_name + "_" + Math.round(det.box[0] / 30));
                 activeKeys.add(key);
 
                 let [x1, y1, x2, y2] = det.box;
@@ -731,27 +888,54 @@
                 }
                 smoothedBoxes[key] = [x1, y1, x2, y2];
 
-                ctx.strokeStyle = '#38bdf8';
-                ctx.lineWidth = 4;
-                ctx.shadowColor = 'rgba(56, 189, 248, 0.5)';
-                ctx.shadowBlur = 8;
-                ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-                ctx.shadowBlur = 0; // Reset blur
+                const isUrgent = trackId ? urgentSet.has(trackId) : false;
+                const hazardInfo = trackId ? hazardMap.get(trackId) : null;
 
-                ctx.fillStyle = '#38bdf8';
-                ctx.font = 'bold 22px Outfit, sans-serif';
-                let text = `${det.class_name} ${(det.confidence * 100).toFixed(0)}%`;
+                // Color coding based on hazard priority
+                let strokeColor = '#38bdf8';
+                let shadowColor = 'rgba(56, 189, 248, 0.5)';
+                let lineWidth = 3;
+
+                if (isUrgent) {
+                    strokeColor = '#ef4444';
+                    shadowColor = 'rgba(239, 68, 68, 0.7)';
+                    lineWidth = 4;
+                } else if (hazardInfo) {
+                    strokeColor = '#f59e0b';
+                    shadowColor = 'rgba(245, 158, 11, 0.6)';
+                    lineWidth = 3.5;
+                }
+
+                ctx.strokeStyle = strokeColor;
+                ctx.lineWidth = lineWidth;
+                ctx.shadowColor = shadowColor;
+                ctx.shadowBlur = isUrgent ? 12 : 6;
+                ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                ctx.shadowBlur = 0;
+
+                // Label construction
+                ctx.fillStyle = strokeColor;
+                ctx.font = 'bold 20px Outfit, sans-serif';
+
+                let labelParts = [];
+                if (trackId) labelParts.push(`[#${trackId}]`);
+                labelParts.push(det.class_name);
+                labelParts.push(`${(det.confidence * 100).toFixed(0)}%`);
+
+                if (det.is_approaching) {
+                    labelParts.push("↑ APPROACHING");
+                }
 
                 const distData = distances.find(d =>
                     d.object === det.class_name &&
                     Math.abs(d.box[0] - det.box[0]) < 40
                 );
-
                 if (distData) {
-                    text += ` - ${distData.distance}`;
+                    labelParts.push(`(${distData.distance})`);
                 }
 
-                ctx.fillText(text, x1, y1 > 28 ? y1 - 10 : 28);
+                const labelText = labelParts.join(' ');
+                ctx.fillText(labelText, x1, y1 > 26 ? y1 - 8 : 24);
             }
 
             // Clean up keys for objects no longer present

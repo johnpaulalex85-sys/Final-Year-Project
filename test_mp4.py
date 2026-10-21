@@ -20,16 +20,31 @@ from services import (
     get_ocr_service,
     get_face_service,
     get_depth_service,
-    get_describe_service
+    get_describe_service,
+    get_hazard_prioritizer
 )
 from utils.scene_builder import build_scene_json
 
-def draw_annotations(frame, yolo_dets, face_cache, ocr_cache, distance_cache, description=""):
-    """Annotates video frame with bounding boxes, labels, distances, and scene HUD."""
+def draw_annotations(frame, yolo_dets, face_cache, ocr_cache, distance_cache, description="", hazards=None, corridor=None, metrics=None):
+    """Annotates video frame with corridor rails, hazard badges, track IDs, labels, distances, and scene HUD."""
     annotated = frame.copy()
     h, w, _ = annotated.shape
-    
-    # 1. Draw YOLO Object Detections (Cyan / Green)
+    hazards = hazards or []
+
+    # 0. Draw Walking Corridor Guide Rails
+    if corridor and "x_min" in corridor and "x_max" in corridor:
+        x_min = corridor["x_min"]
+        x_max = corridor["x_max"]
+        # Draw dotted / dashed vertical guide lines
+        for y_step in range(0, h, 20):
+            cv2.line(annotated, (x_min, y_step), (x_min, min(h, y_step + 10)), (255, 200, 50), 1)
+            cv2.line(annotated, (x_max, y_step), (x_max, min(h, y_step + 10)), (255, 200, 50), 1)
+        cv2.putText(annotated, "WALKING CORRIDOR", ((x_min + x_max) // 2 - 70, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 200, 50), 1)
+
+    urgent_track_ids = set(haz.get("track_id") for haz in hazards if haz.get("is_urgent"))
+    hazard_track_ids = set(haz.get("track_id") for haz in hazards)
+
+    # 1. Draw YOLO Object Detections (with Tracking & Hazard Urgency)
     for det in yolo_dets:
         box = det.get("box")
         if not box or len(box) != 4:
@@ -37,23 +52,42 @@ def draw_annotations(frame, yolo_dets, face_cache, ocr_cache, distance_cache, de
         x1, y1, x2, y2 = [int(v) for v in box]
         cls_name = det.get("class_name", "object")
         conf = det.get("confidence", 0.0)
-        
+        track_id = det.get("track_id")
+        is_approaching = det.get("is_approaching", False)
+
+        is_urgent = (track_id in urgent_track_ids) if track_id else False
+        is_hazard = (track_id in hazard_track_ids) if track_id else False
+
+        # Color scheme: Red for Urgent, Amber for Hazard, Cyan for standard
+        if is_urgent:
+            box_color = (0, 0, 255)  # BGR Red
+            label_bg = (0, 0, 220)
+        elif is_hazard:
+            box_color = (0, 165, 255)  # BGR Orange/Amber
+            label_bg = (0, 140, 230)
+        else:
+            box_color = (255, 191, 0)  # BGR Cyan/Blue
+            label_bg = (255, 191, 0)
+
         # Match distance
         dist_str = ""
         for d in distance_cache:
             if d.get("object") == cls_name:
                 dist_str = f" | {d.get('distance')}"
                 break
-                
-        label = f"{cls_name} {int(conf * 100)}%{dist_str}"
-        
+
+        track_str = f"[#{track_id}] " if track_id else ""
+        appr_str = " ^APPR" if is_approaching else ""
+        label = f"{track_str}{cls_name} {int(conf * 100)}%{dist_str}{appr_str}"
+
         # Bounding box
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 191, 0), 2)
-        
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), box_color, 2 if not is_urgent else 3)
+
         # Text label background
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-        cv2.rectangle(annotated, (x1, max(0, y1 - 25)), (x1 + tw + 6, max(25, y1)), (255, 191, 0), -1)
-        cv2.putText(annotated, label, (x1 + 3, max(18, y1 - 7)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2)
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
+        cv2.rectangle(annotated, (x1, max(0, y1 - 22)), (x1 + tw + 6, max(22, y1)), label_bg, -1)
+        text_color = (255, 255, 255) if is_urgent or is_hazard else (0, 0, 0)
+        cv2.putText(annotated, label, (x1 + 3, max(16, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.50, text_color, 1)
 
     # 2. Draw Recognized Faces (Purple)
     for face in face_cache.get("faces", []):
@@ -63,10 +97,10 @@ def draw_annotations(frame, yolo_dets, face_cache, ocr_cache, distance_cache, de
         x1, y1, x2, y2 = [int(v) for v in box]
         name = face.get("name", "Unknown")
         label = f"Face: {name}"
-        
+
         cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 0, 255), 2)
-        cv2.rectangle(annotated, (x1, max(0, y1 - 25)), (x1 + 150, max(25, y1)), (255, 0, 255), -1)
-        cv2.putText(annotated, label, (x1 + 3, max(18, y1 - 7)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+        cv2.rectangle(annotated, (x1, max(0, y1 - 22)), (x1 + 140, max(22, y1)), (255, 0, 255), -1)
+        cv2.putText(annotated, label, (x1 + 3, max(16, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
 
     # 3. Draw OCR Text Detections (Yellow)
     for item in ocr_cache.get("texts", []):
@@ -76,16 +110,22 @@ def draw_annotations(frame, yolo_dets, face_cache, ocr_cache, distance_cache, de
             ys = [pt[1] for pt in bbox]
             x1, y1, x2, y2 = int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))
             text = item.get("text", "")
-            
+
             cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 255), 2)
             cv2.putText(annotated, f'"{text}"', (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-    # 4. HUD Top Bar for Scene Description
+    # 4. HUD Top Bar for Telemetry and Scene Status
+    overlay = annotated.copy()
+    cv2.rectangle(overlay, (0, 0), (w, 55), (15, 23, 42), -1)
+    cv2.addWeighted(overlay, 0.75, annotated, 0.25, 0, annotated)
+
+    hud_fps = f"{metrics.get('fps', 0):.1f} FPS" if metrics else ""
+    hud_inf = f"Infer: {metrics.get('inf_ms', 0):.1f}ms" if metrics else ""
+    hud_hazards = f"Hazards: {len(hazards)}" if hazards else "Path: Clear"
+    cv2.putText(annotated, f"Vision Assistant v2.0 | {hud_fps} | {hud_inf} | {hud_hazards}", (15, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (56, 189, 248), 1)
+
     if description:
-        overlay = annotated.copy()
-        cv2.rectangle(overlay, (0, 0), (w, 45), (15, 23, 42), -1)
-        cv2.addWeighted(overlay, 0.75, annotated, 0.25, 0, annotated)
-        cv2.putText(annotated, f"AI Description: {description}", (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+        cv2.putText(annotated, f"AI: {description[:75]}", (15, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
 
     return annotated
 
@@ -156,6 +196,7 @@ def test_pipeline_on_mp4(video_path: str, output_path: str = "outputs/mp4_test_o
     face_service = get_face_service()
     depth_service = get_depth_service()
     describe_service = get_describe_service()
+    hazard_prioritizer = get_hazard_prioritizer()
 
     # Shared thread-safe state for AI detections
     state_lock = threading.Lock()
@@ -164,7 +205,10 @@ def test_pipeline_on_mp4(video_path: str, output_path: str = "outputs/mp4_test_o
         "face_cache": {"faces": []},
         "ocr_cache": {"texts": []},
         "distance_cache": [],
-        "description": ""
+        "description": "",
+        "hazards": [],
+        "corridor": {"x_min": int(width * 0.32), "x_max": int(width * 0.68)},
+        "inf_ms": 0.0
     }
     
     frame_queue = queue.Queue(maxsize=2)
@@ -191,40 +235,50 @@ def test_pipeline_on_mp4(video_path: str, output_path: str = "outputs/mp4_test_o
                 scale = 1.0
                 frame_small = frame_to_process
 
-            # 1. YOLO Object Detection
+            # 1. YOLO Object Detection with Temporal Tracking
             y_dets = []
+            inf_ms = 0.0
             if yolo_detector:
-                raw_dets = yolo_detector.detect(frame_small, conf_threshold=0.35)
+                t0 = time.perf_counter()
+                raw_dets = yolo_detector.detect(frame_small, enable_tracking=True)
+                inf_ms = (time.perf_counter() - t0) * 1000.0
                 # Rescale boxes back to original video dimensions
                 for d in raw_dets:
                     box = d.get("box", [])
                     if len(box) == 4 and scale != 1.0:
                         box = [round(v / scale, 2) for v in box]
                     y_dets.append({
+                        "track_id": d.get("track_id"),
                         "class_name": d.get("class_name"),
                         "confidence": d.get("confidence"),
-                        "box": box
+                        "box": box,
+                        "is_approaching": d.get("is_approaching", False)
                     })
 
-            # 2. Face Recognition (Staggered every 4th AI frame)
+            # 2. Hazard Prioritization
+            haz_res = {"hazards": [], "corridor": {"x_min": int(w_orig * 0.32), "x_max": int(w_orig * 0.68)}}
+            if hazard_prioritizer:
+                haz_res = hazard_prioritizer.evaluate_hazards(y_dets, frame_width=w_orig, frame_height=h_orig)
+
+            # 3. Face Recognition (Staggered every 15th frame)
             f_cache = ai_state["face_cache"]
-            if ai_frame_count % 4 == 0 and face_service:
+            if ai_frame_count % 15 == 0 and face_service:
                 try:
                     f_cache = face_service.recognize_face(frame_small, threshold=0.6)
                 except Exception as e:
                     logger.debug(f"Face error: {e}")
 
-            # 3. OCR Text Detection (Staggered every 8th AI frame)
+            # 4. OCR Text Detection (Staggered every 30th frame)
             o_cache = ai_state["ocr_cache"]
-            if ai_frame_count % 8 == 0 and ocr_service:
+            if ai_frame_count % 30 == 0 and ocr_service:
                 try:
                     o_cache = ocr_service.detect_text(frame_small, min_confidence=0.5)
                 except Exception as e:
                     logger.debug(f"OCR error: {e}")
 
-            # 4. Depth Estimation (Staggered every 4th AI frame)
+            # 5. Depth Estimation (Staggered every 20th frame)
             d_cache = ai_state["distance_cache"]
-            if ai_frame_count % 4 == 0 and depth_service:
+            if ai_frame_count % 20 == 0 and depth_service:
                 try:
                     dists, _ = depth_service.estimate_depth(frame_small, y_dets)
                     if dists:
@@ -232,9 +286,9 @@ def test_pipeline_on_mp4(video_path: str, output_path: str = "outputs/mp4_test_o
                 except Exception as e:
                     logger.debug(f"Depth error: {e}")
 
-            # 5. Scene Description (Every 24th AI frame)
+            # 6. Scene Description (Every 40th AI frame)
             desc = ai_state["description"]
-            if ai_frame_count % 24 == 1 and describe_service:
+            if ai_frame_count % 40 == 1 and describe_service:
                 scene_json = build_scene_json(y_dets, o_cache, f_cache, d_cache)
                 desc = describe_service.generate_description(frame_small, scene_json)
 
@@ -245,6 +299,9 @@ def test_pipeline_on_mp4(video_path: str, output_path: str = "outputs/mp4_test_o
                 ai_state["ocr_cache"] = o_cache
                 ai_state["distance_cache"] = d_cache
                 ai_state["description"] = desc
+                ai_state["hazards"] = haz_res.get("hazards", [])
+                ai_state["corridor"] = haz_res.get("corridor")
+                ai_state["inf_ms"] = inf_ms
 
             frame_queue.task_done()
 
@@ -276,15 +333,23 @@ def test_pipeline_on_mp4(video_path: str, output_path: str = "outputs/mp4_test_o
                 ocr_cache = dict(ai_state["ocr_cache"])
                 distance_cache = list(ai_state["distance_cache"])
                 current_description = ai_state["description"]
+                hazards = list(ai_state.get("hazards", []))
+                corridor = ai_state.get("corridor")
+                inf_ms = ai_state.get("inf_ms", 0.0)
 
             # Annotate current frame
+            elapsed_sec = time.time() - start_time
+            live_fps = frame_count / elapsed_sec if elapsed_sec > 0 else 0.0
             annotated_frame = draw_annotations(
                 frame,
                 yolo_dets,
                 face_cache,
                 ocr_cache,
                 distance_cache,
-                description=current_description
+                description=current_description,
+                hazards=hazards,
+                corridor=corridor,
+                metrics={"fps": live_fps, "inf_ms": inf_ms}
             )
 
             writer.write(annotated_frame)

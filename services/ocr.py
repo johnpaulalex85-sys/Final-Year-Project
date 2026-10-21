@@ -2,20 +2,22 @@ import logging
 import cv2
 import easyocr
 import numpy as np
+from config import settings
 
 logger = logging.getLogger(__name__)
 
 class OCRService:
     def __init__(self, languages=['en']):
-        logger.info(f"Loading EasyOCR model for languages: {languages}...")
+        use_gpu = (settings.DEVICE == "cuda")
+        logger.info(f"Loading EasyOCR model for languages: {languages} (GPU={use_gpu})...")
         try:
-            self.reader = easyocr.Reader(languages, gpu=True)
+            self.reader = easyocr.Reader(languages, gpu=use_gpu)
             logger.info("EasyOCR model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to load EasyOCR model: {e}")
             self.reader = None
 
-    def detect_text(self, frame: np.ndarray, conf_threshold: float = 0.5, max_dim: int = 480, **kwargs):
+    def detect_text(self, frame: np.ndarray, conf_threshold: float = 0.5, max_dim: int = 400, **kwargs):
         if "min_confidence" in kwargs:
             conf_threshold = kwargs["min_confidence"]
 
@@ -24,7 +26,7 @@ class OCRService:
 
         h, w = frame.shape[:2]
         
-        # Calculate scale factor to resize image if larger than max_dim for fast detection
+        # Downscale for high-speed CPU OCR detection
         scale = 1.0
         if max(h, w) > max_dim:
             scale = max_dim / float(max(h, w))
@@ -33,16 +35,15 @@ class OCRService:
         else:
             resized_frame = frame
 
-        # Convert to grayscale for faster PyTorch tensor conversion & inference
+        # Convert to grayscale for faster processing
         gray_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2GRAY)
 
         try:
-            # Fast greedy decoder, disabled contrast adjustment pass, batched inference
             results = self.reader.readtext(
                 gray_frame,
                 decoder='greedy',
                 adjust_contrast=0.0,
-                batch_size=8,
+                batch_size=4,
                 canvas_size=max_dim
             )
         except Exception as e:
@@ -52,7 +53,6 @@ class OCRService:
         texts = []
         for (bbox, text, prob) in results:
             if prob >= conf_threshold:
-                # Scale bbox back to original frame size if resized
                 serializable_bbox = [
                     [int(round(pt[0] / scale)), int(round(pt[1] / scale))]
                     for pt in bbox
