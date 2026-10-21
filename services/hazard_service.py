@@ -87,6 +87,13 @@ HAZARD_SEVERITY_MAP = {
     "open cabinet door": 0.80,
     "open door": 0.75,
     "door": 0.65,
+    "doorway": 0.60,
+    "door frame": 0.60,
+    "closed door": 0.75,
+    "glass door": 0.85,
+    "sliding door": 0.70,
+    "entrance": 0.60,
+    "exit": 0.60,
 
     # Objects Blocking Walking Path
     "chair": 0.65,
@@ -219,6 +226,66 @@ class HazardPrioritizer:
             logger.debug(f"Stair detection error: {e}")
         return None
 
+    def detect_door_and_doorway(
+        self,
+        frame: np.ndarray
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fast architectural analyzer for detecting indoor doorways, open/closed door frames,
+        and open door panels in the walking path without relying on bounding box models.
+        """
+        if frame is None or frame.size == 0:
+            return None
+        try:
+            h, w = frame.shape[:2]
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            y_top = int(h * 0.18)
+            y_mid = int(h * 0.60)
+            roi = gray[y_top:y_mid, :]
+
+            sobel_x = np.abs(cv2.Sobel(roi, cv2.CV_32F, 1, 0, ksize=3))
+            col_energy = sobel_x.mean(axis=0)
+            kernel = np.ones(11) / 11
+            smoothed = np.convolve(col_energy, kernel, mode='same')
+
+            # Left door jamb (15% to 45% width)
+            left_zone = smoothed[int(w * 0.15):int(w * 0.45)]
+            left_idx = int(w * 0.15) + int(np.argmax(left_zone))
+            left_peak = float(smoothed[left_idx])
+
+            # Right door jamb (55% to 85% width)
+            right_zone = smoothed[int(w * 0.55):int(w * 0.85)]
+            right_idx = int(w * 0.55) + int(np.argmax(right_zone))
+            right_peak = float(smoothed[right_idx])
+
+            width_ratio = (right_idx - left_idx) / w
+
+            # Must have two strong vertical jambs and valid doorway proportions (35% to 70% frame width)
+            if left_peak >= 35.0 and right_peak >= 35.0 and 0.35 <= width_ratio <= 0.70:
+                has_right_door = (w - right_idx) >= int(w * 0.12)
+                has_left_door = left_idx >= int(w * 0.12)
+                door_side = "right" if has_right_door else ("left" if has_left_door else "none")
+
+                return {
+                    "doorway": {
+                        "class_name": "doorway",
+                        "confidence": 0.90,
+                        "box": [left_idx, int(h * 0.18), right_idx, int(h * 0.88)],
+                        "direction": "directly ahead",
+                        "is_open": True
+                    },
+                    "door": {
+                        "class_name": "open door",
+                        "confidence": 0.85,
+                        "box": [right_idx, int(h * 0.18), min(w, right_idx + int(w * 0.25)), int(h * 0.88)] if has_right_door else [max(0, left_idx - int(w * 0.25)), int(h * 0.18), left_idx, int(h * 0.88)],
+                        "direction": f"on your {door_side}" if door_side != "none" else "directly ahead",
+                        "side": door_side
+                    }
+                }
+        except Exception as e:
+            logger.debug(f"Doorway detection error: {e}")
+        return None
+
     def evaluate_hazards(
         self,
         tracked_objects: List[Dict[str, Any]],
@@ -253,6 +320,40 @@ class HazardPrioritizer:
                     "is_urgent": True,
                     "priority_score": 0.98
                 })
+            else:
+                # 0b. Check physical doorway and door structure
+                door_res = self.detect_door_and_doorway(frame)
+                if door_res:
+                    if "doorway" in door_res:
+                        dw = door_res["doorway"]
+                        evaluated_hazards.append({
+                            "track_id": 9902,
+                            "class_name": "doorway",
+                            "confidence": dw["confidence"],
+                            "box": dw["box"],
+                            "direction": dw["direction"],
+                            "direction_key": "center",
+                            "in_corridor": True,
+                            "proximity": "approaching",
+                            "is_approaching": False,
+                            "is_urgent": False,
+                            "priority_score": 0.60
+                        })
+                    if "door" in door_res:
+                        dr = door_res["door"]
+                        evaluated_hazards.append({
+                            "track_id": 9903,
+                            "class_name": dr["class_name"],
+                            "confidence": dr["confidence"],
+                            "box": dr["box"],
+                            "direction": dr["direction"],
+                            "direction_key": dr.get("side", "right"),
+                            "in_corridor": False,
+                            "proximity": "approaching",
+                            "is_approaching": False,
+                            "is_urgent": False,
+                            "priority_score": 0.70
+                        })
 
         for obj in tracked_objects:
             cls_name = obj.get("class_name", "").lower().strip()

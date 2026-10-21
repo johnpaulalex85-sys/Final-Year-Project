@@ -316,6 +316,13 @@ class DescribeService:
 
             if stair_detected:
                 parts.insert(0, "Caution, flight of stairs directly ahead. Proceed with care.")
+            elif frame is not None:
+                from services.hazard_service import HazardPrioritizer
+                hp = HazardPrioritizer()
+                d_res = hp.detect_door_and_doorway(frame)
+                if d_res:
+                    door_side = d_res.get("door", {}).get("side", "right")
+                    parts.insert(0, f"There is an open doorway directly ahead with an open door on your {door_side}.")
 
             if not parts:
                 return "No distinct obstacles identified in your immediate view."
@@ -400,6 +407,30 @@ class DescribeService:
             if ahead_objs:
                 return f"Caution, directly ahead there is {', '.join(ahead_objs[:3])}."
             return "No obstacles are identified directly in front of you. Always use your cane to verify ground conditions."
+
+        # 3b. Door / Doorway / Entrance Queries
+        if any(kw in q for kw in ["door", "doorway", "entrance", "exit", "portal", "passage"]):
+            # Check if door/doorway is in objects
+            door_objs = [o for o in objects if any(d_kw in o.get("class_name", "").lower() for d_kw in ["door", "doorway", "entrance"])]
+            if door_objs:
+                obj = door_objs[0]
+                cls = obj.get("class_name", "doorway")
+                box = obj.get("box")
+                direction = _get_direction(box, frame_width)
+                dist = _get_distance_for_box(box, distances, cls)
+                dist_str = f" at {dist}" if dist else ""
+                return f"Yes, there is a {cls} {direction}{dist_str}."
+
+            # Physical frame doorway check
+            if frame is not None:
+                from services.hazard_service import HazardPrioritizer
+                hp = HazardPrioritizer()
+                door_res = hp.detect_door_and_doorway(frame)
+                if door_res:
+                    door_side = door_res.get("door", {}).get("side", "right")
+                    return f"There is an open doorway directly ahead with an open door on your {door_side}. The walking passage through the center appears open."
+
+            return "I do not see any door or doorway directly visible in the current camera view."
 
         # 4. Count Queries ("how many ...")
         if "how many" in q:

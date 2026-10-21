@@ -46,10 +46,10 @@ class Settings(BaseSettings):
     URGENT_HAZARD_COOLDOWN_SECONDS: float = 2.0
 
     # Background AI Services Schedules (in processed frame intervals)
-    OCR_INTERVAL_FRAMES: int = 30
-    FACE_INTERVAL_FRAMES: int = 15
-    DEPTH_INTERVAL_FRAMES: int = 20
-    RUN_DEPTH_ON_DEMAND_ONLY: bool = False
+    OCR_INTERVAL_FRAMES: int = 45
+    FACE_INTERVAL_FRAMES: int = 30
+    DEPTH_INTERVAL_FRAMES: int = 30
+    RUN_DEPTH_ON_DEMAND_ONLY: bool = True
 
     # Model Paths
     INSIGHTFACE_MODEL_DIR: str = "models/insightface"

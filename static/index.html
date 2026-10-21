@@ -1009,6 +1009,45 @@
                     continue;
                 }
 
+                // Special high-visibility rendering for doorway passage
+                if (det.class_name === 'doorway') {
+                    ctx.save();
+                    ctx.setLineDash([6, 4]);
+                    ctx.strokeStyle = '#10b981';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                    ctx.fillStyle = 'rgba(16, 185, 129, 0.12)';
+                    ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+                    ctx.restore();
+
+                    const bannerH = labelFontSize + 8;
+                    const bY = y1 > bannerH ? y1 - bannerH : 0;
+                    ctx.fillStyle = '#10b981';
+                    ctx.fillRect(x1, bY, Math.min(x2 - x1, 160), bannerH);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold ' + labelFontSize + 'px Outfit, sans-serif';
+                    ctx.fillText("🚪 DOORWAY", x1 + 6, bY + bannerH - 6);
+                    continue;
+                }
+
+                // Special high-visibility rendering for open / closed door
+                if (det.class_name === 'open door' || det.class_name === 'door' || det.class_name === 'closed door') {
+                    ctx.strokeStyle = '#f59e0b';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                    ctx.fillStyle = 'rgba(245, 158, 11, 0.14)';
+                    ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+
+                    const bannerH = labelFontSize + 8;
+                    const bY = y1 > bannerH ? y1 - bannerH : 0;
+                    ctx.fillStyle = '#f59e0b';
+                    ctx.fillRect(x1, bY, Math.min(x2 - x1, 150), bannerH);
+                    ctx.fillStyle = '#0f172a';
+                    ctx.font = 'bold ' + labelFontSize + 'px Outfit, sans-serif';
+                    ctx.fillText(det.class_name === 'open door' ? "🚪 OPEN DOOR" : "🚪 DOOR", x1 + 6, bY + bannerH - 6);
+                    continue;
+                }
+
                 const isUrgent = trackId ? urgentSet.has(trackId) : false;
                 const hazardInfo = trackId ? hazardMap.get(trackId) : null;
 

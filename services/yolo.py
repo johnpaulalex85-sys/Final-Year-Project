@@ -184,7 +184,7 @@ STREAMLINED_WALKING_CLASSES = [
     "water puddle",
     "flooded pavement",
 
-    # Fixed obstacles
+    # Fixed obstacles and structures
     "pole",
     "lamp post",
     "electric pole",
@@ -200,6 +200,17 @@ STREAMLINED_WALKING_CLASSES = [
     "pillar",
     "tree trunk",
     "low-hanging branch",
+
+    # Doors, doorways, and architectural passages
+    "door",
+    "doorway",
+    "door frame",
+    "open door",
+    "closed door",
+    "glass door",
+    "sliding door",
+    "entrance",
+    "exit",
 
     # Objects blocking the path
     "chair",
