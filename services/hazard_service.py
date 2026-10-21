@@ -1,5 +1,7 @@
 import time
 import logging
+import cv2
+import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 from config import settings
 
@@ -10,43 +12,131 @@ HAZARD_SEVERITY_MAP = {
     # Elevation / Falling / Step Hazards (Critical severity)
     "stairs": 0.95,
     "staircase": 0.95,
+    "steps": 0.90,
     "step": 0.90,
+    "downstairs": 0.95,
+    "upstairs": 0.90,
     "curb": 0.85,
+    "kerb": 0.85,
+    "raised pavement": 0.80,
+    "roadside edge": 0.85,
+    "ramp": 0.70,
+    "steep slope": 0.85,
+    
+    # Walking-Surface Hazards
     "pothole": 0.85,
+    "hole in the ground": 0.85,
+    "uneven pavement": 0.80,
+    "broken pavement": 0.80,
+    "cracked sidewalk": 0.75,
+    "loose paving stone": 0.80,
+    "construction debris": 0.80,
+    "rubble": 0.80,
     "open drain": 0.90,
+    "drain hole": 0.85,
     "manhole": 0.85,
+    "open manhole": 0.95,
+    "water puddle": 0.75,
+    "flooded pavement": 0.85,
     "wet floor": 0.80,
     "slippery floor": 0.80,
     
     # Moving Vehicles & Transport (Critical severity)
     "car": 0.90,
+    "taxi": 0.90,
+    "van": 0.90,
     "bus": 0.95,
     "truck": 0.95,
     "motorcycle": 0.90,
+    "scooter": 0.85,
+    "electric scooter": 0.85,
     "bicycle": 0.85,
     "moving vehicle": 0.95,
     "auto rickshaw": 0.90,
-    "van": 0.90,
+    "cyclist": 0.85,
+    "person on a bicycle": 0.85,
+    "person on a motorcycle": 0.90,
     
-    # Direct Walking Path Obstacles (High severity when central)
+    # Fixed Obstacles
     "pole": 0.80,
+    "lamp post": 0.80,
+    "electric pole": 0.80,
     "electricity pole": 0.80,
-    "tree": 0.75,
-    "obstacle": 0.80,
+    "traffic sign": 0.75,
+    "signpost": 0.75,
+    "bollard": 0.80,
+    "bollard post": 0.80,
     "road barrier": 0.80,
+    "traffic barrier": 0.80,
     "construction barrier": 0.85,
     "fence": 0.75,
+    "gate": 0.75,
     "wall": 0.70,
+    "pillar": 0.75,
+    "tree": 0.75,
+    "tree trunk": 0.75,
+    "low-hanging branch": 0.85,
+    "obstacle": 0.80,
+
+    # Head & Upper Body Height Hazards
+    "low ceiling": 0.90,
+    "overhanging obstacle": 0.90,
+    "hanging sign": 0.85,
+    "hanging wire": 0.90,
+    "protruding object": 0.85,
+    "open cabinet door": 0.80,
+    "open door": 0.75,
     "door": 0.65,
+
+    # Objects Blocking Walking Path
     "chair": 0.65,
     "table": 0.65,
-    "dustbin": 0.60,
+    "bench": 0.65,
+    "stool": 0.60,
+    "box": 0.65,
+    "cardboard box": 0.65,
+    "crate": 0.70,
     "trash bin": 0.60,
-    
-    # People (Moderate severity, elevated if approaching or central)
+    "dustbin": 0.60,
+    "garbage bag": 0.60,
+    "suitcase": 0.65,
+    "backpack": 0.60,
+    "shopping cart": 0.70,
+    "trolley": 0.70,
+    "wheelchair": 0.70,
+    "stroller": 0.70,
+    "parked bicycle": 0.70,
+    "parked motorcycle": 0.75,
+
+    # Road & Pedestrian Infrastructure
+    "traffic cone": 0.70,
+    "roadwork": 0.85,
+    "excavation": 0.95,
+    "road divider": 0.80,
+    "median barrier": 0.80,
+    "railway crossing barrier": 0.95,
+
+    # Dropped or Misplaced Ground Obstacles
+    "brick": 0.75,
+    "stone": 0.75,
+    "rock": 0.75,
+    "wooden plank": 0.75,
+    "metal pipe": 0.80,
+    "cable": 0.80,
+    "hose": 0.75,
+    "fallen branch": 0.80,
+    "fallen tree": 0.90,
+
+    # People & Animals
     "person": 0.70,
     "pedestrian": 0.70,
-    "dog": 0.70
+    "child": 0.75,
+    "dog": 0.70,
+    "cat": 0.60,
+    "cow": 0.85,
+    "goat": 0.70,
+    "horse": 0.85,
+    "stray animal": 0.75
 }
 
 class HazardPrioritizer:
@@ -72,21 +162,97 @@ class HazardPrioritizer:
         self.announcement_history: Dict[Tuple[str, str], float] = {}
         self.last_urgent_announcement_time: float = 0.0
 
+    def detect_stairs_and_elevation(
+        self,
+        frame: np.ndarray,
+        x_min: float,
+        x_max: float
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fast, deterministic geometric surface analyzer for detecting flights of stairs,
+        steps, and elevation drop-offs in the walking corridor without relying solely on bounding-box models.
+        """
+        if frame is None or frame.size == 0:
+            return None
+        try:
+            h, w = frame.shape[:2]
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            
+            # Analyze both standard corridor and center lane (which avoids side handrail vertical edges)
+            corridors = [
+                (int(x_min), int(x_max)),
+                (int(w * 0.28), int(w * 0.72))
+            ]
+            
+            for c_x1, c_x2 in corridors:
+                if c_x2 <= c_x1:
+                    continue
+                y_start = int(h * 0.30)
+                corridor = gray[y_start:, c_x1:c_x2]
+                if corridor.size == 0:
+                    continue
+
+                sobel_y = np.abs(cv2.Sobel(corridor, cv2.CV_32F, 0, 1, ksize=3))
+                sobel_x = np.abs(cv2.Sobel(corridor, cv2.CV_32F, 1, 0, ksize=3))
+
+                h_energy = float(np.mean(sobel_y))
+                v_energy = float(np.mean(sobel_x)) + 1e-5
+                ratio = h_energy / v_energy
+
+                row_means = sobel_y.mean(axis=1)
+                thresh = np.percentile(row_means, 82)
+                strong_rows = np.where(row_means > thresh)[0]
+
+                diffs = np.diff(strong_rows)
+                step_diffs = diffs[diffs > 8]
+                spacing_std = float(np.std(step_diffs)) if len(step_diffs) >= 4 else 999.0
+
+                # Staircase criteria: Strong horizontal edge energy, horizontal dominance, and regular step spacing
+                if h_energy >= 32.0 and ratio >= 1.15 and spacing_std <= 20.0 and len(step_diffs) >= 4:
+                    return {
+                        "class_name": "stairs",
+                        "confidence": round(min(0.95, 0.70 + (h_energy / 150.0)), 2),
+                        "box": [c_x1, int(h * 0.20), c_x2, int(h * 0.95)],
+                        "is_urgent": True
+                    }
+        except Exception as e:
+            logger.debug(f"Stair detection error: {e}")
+        return None
+
     def evaluate_hazards(
         self,
         tracked_objects: List[Dict[str, Any]],
         frame_width: int = 640,
-        frame_height: int = 480
+        frame_height: int = 480,
+        frame: Optional[np.ndarray] = None
     ) -> Dict[str, Any]:
         """
-        Evaluates a set of tracked objects in the current frame and returns
-        prioritized hazards and any proactive spoken audio alert.
+        Evaluates tracked objects and physical surface geometry in the walking corridor.
+        Returns prioritized hazards and any proactive spoken audio alert.
         """
         now = time.time()
         corridor_x_min = frame_width * self.corridor_left_ratio
         corridor_x_max = frame_width * self.corridor_right_ratio
         
         evaluated_hazards = []
+
+        # 0. Check physical surface geometry for stairs / steps in walking corridor
+        if frame is not None:
+            stair_res = self.detect_stairs_and_elevation(frame, corridor_x_min, corridor_x_max)
+            if stair_res:
+                evaluated_hazards.append({
+                    "track_id": 9901,
+                    "class_name": "stairs",
+                    "confidence": stair_res["confidence"],
+                    "box": stair_res["box"],
+                    "direction": "directly ahead",
+                    "direction_key": "center",
+                    "in_corridor": True,
+                    "proximity": "immediate",
+                    "is_approaching": False,
+                    "is_urgent": True,
+                    "priority_score": 0.98
+                })
 
         for obj in tracked_objects:
             cls_name = obj.get("class_name", "").lower().strip()
@@ -230,23 +396,27 @@ class HazardPrioritizer:
     ) -> str:
         """Constructs concise walking assistance audio alerts."""
         # Special Elevation / Drop-off phrases
-        if cls in ["stairs", "staircase", "step"]:
+        if cls in ["stairs", "staircase", "step", "steps", "downstairs", "upstairs"]:
             return f"Caution, steps {direction}."
-        if cls in ["curb", "pothole"]:
-            return f"Caution, {cls} {direction}."
-        if cls in ["open drain", "manhole"]:
-            return f"Warning, open drain {direction}."
-        if cls in ["wet floor", "slippery floor"]:
-            return f"Caution, wet floor {direction}."
+        if cls in ["curb", "kerb", "raised pavement", "roadside edge", "steep slope"]:
+            return f"Caution, curb or slope {direction}."
+        if cls in ["pothole", "hole in the ground", "uneven pavement", "broken pavement", "cracked sidewalk", "loose paving stone"]:
+            return f"Caution, uneven surface {direction}."
+        if cls in ["open drain", "drain hole", "manhole", "open manhole", "excavation"]:
+            return f"Warning, open ground hazard {direction}."
+        if cls in ["wet floor", "slippery floor", "water puddle", "flooded pavement"]:
+            return f"Caution, wet surface {direction}."
+        if cls in ["low ceiling", "overhanging obstacle", "hanging sign", "hanging wire", "low-hanging branch"]:
+            return f"Caution, overhead hazard {direction}."
 
         # Approaching vehicle / bicycle phrases
-        if cls in ["car", "bus", "truck", "motorcycle", "moving vehicle"] and is_approaching:
+        if cls in ["car", "taxi", "van", "bus", "truck", "motorcycle", "scooter", "electric scooter", "moving vehicle", "auto rickshaw", "person on a motorcycle"] and is_approaching:
             return f"Vehicle approaching {direction}."
-        if cls == "bicycle" and is_approaching:
+        if cls in ["bicycle", "cyclist", "person on a bicycle"] and is_approaching:
             return f"Bicycle approaching {direction}."
 
         # Approaching person
-        if cls == "person" and is_approaching and direction == "directly ahead":
+        if cls in ["person", "pedestrian", "child"] and is_approaching and direction == "directly ahead":
             return "Person approaching ahead."
 
         # General obstacle in path

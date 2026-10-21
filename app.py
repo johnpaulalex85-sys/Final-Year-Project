@@ -239,8 +239,18 @@ async def websocket_detect(websocket: WebSocket):
             # 2. HAZARD PRIORITIZATION & SPATIAL WALKING CORRIDOR ANALYSIS
             hazard_data = {"hazards": [], "spoken_alert": "", "is_urgent": False, "corridor": {"x_min": 0, "x_max": w}}
             if hazard_prioritizer and settings.HAZARD_DETECTION_ENABLED:
-                hazard_data = hazard_prioritizer.evaluate_hazards(detections, frame_width=w, frame_height=h)
+                hazard_data = hazard_prioritizer.evaluate_hazards(detections, frame_width=w, frame_height=h, frame=frame)
                 
+                # If ground surface analysis detected stairs, merge into detections list
+                for haz in hazard_data.get("hazards", []):
+                    if haz.get("class_name") in ["stairs", "staircase", "steps"] and not any(d.get("class_name") in ["stairs", "staircase", "steps"] for d in detections):
+                        detections.append({
+                            "track_id": haz.get("track_id", 9901),
+                            "box": haz["box"],
+                            "confidence": haz["confidence"],
+                            "class_name": haz["class_name"]
+                        })
+
                 # Speak urgent or proactive hazard alert on server if configured
                 alert_text = hazard_data.get("spoken_alert")
                 if alert_text and settings.TTS_MODE in ["server", "both"]:

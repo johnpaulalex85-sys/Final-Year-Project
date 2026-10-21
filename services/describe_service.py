@@ -303,10 +303,22 @@ class DescribeService:
 
                 if valid_words:
                     readable_str = " ".join(valid_words[:10])  # limit to first 10 words
-                    parts.append(f"I can read the text: '{readable_str}'.")
+            # 0. Check for physical elevation / stairs hazard in frame
+            stair_detected = False
+            if any(o.get("class_name") in ["stairs", "staircase", "steps"] for o in objects):
+                stair_detected = True
+            elif frame is not None:
+                from services.hazard_service import HazardPrioritizer
+                hp = HazardPrioritizer()
+                s_res = hp.detect_stairs_and_elevation(frame, frame_width * 0.3, frame_width * 0.7)
+                if s_res:
+                    stair_detected = True
+
+            if stair_detected:
+                parts.insert(0, "Caution, flight of stairs directly ahead. Proceed with care.")
 
             if not parts:
-                return "The area in front of you appears clear."
+                return "No distinct obstacles identified in your immediate view."
 
             return " ".join(parts)
 
@@ -365,7 +377,17 @@ class DescribeService:
             return "No people are detected in the current view."
 
         # 3. Path / Obstacle / Safety Queries
-        if any(kw in q for kw in ["safe", "path", "clear", "obstacle", "walk", "danger", "block", "front", "ahead"]):
+        if any(kw in q for kw in ["safe", "path", "clear", "obstacle", "walk", "danger", "block", "front", "ahead", "stairs", "step"]):
+            # Check for stairs in frame or objects
+            if any(o.get("class_name") in ["stairs", "staircase", "steps"] for o in objects):
+                return "Caution, there is a staircase directly ahead in your walking path. Please proceed carefully."
+            elif frame is not None:
+                from services.hazard_service import HazardPrioritizer
+                hp = HazardPrioritizer()
+                s_res = hp.detect_stairs_and_elevation(frame, frame_width * 0.3, frame_width * 0.7)
+                if s_res:
+                    return "Caution, a flight of stairs is detected directly ahead in your walking path."
+
             ahead_objs = []
             for obj in objects:
                 direction = _get_direction(obj.get("box"), frame_width)
@@ -377,7 +399,7 @@ class DescribeService:
 
             if ahead_objs:
                 return f"Caution, directly ahead there is {', '.join(ahead_objs[:3])}."
-            return "The path directly ahead appears clear."
+            return "No obstacles are identified directly in front of you. Always use your cane to verify ground conditions."
 
         # 4. Count Queries ("how many ...")
         if "how many" in q:

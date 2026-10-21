@@ -506,15 +506,86 @@
             }
         }
 
-        /* RESPONSIVE LAYOUT */
+        /* RESPONSIVE MOBILE LAYOUT (Fixes UI overlap and full-screen camera view) */
+        .drawer-toggle-bar {
+            display: none;
+        }
+
         @media (max-width: 768px) {
+            .floating-header {
+                top: 0.75rem;
+                left: 0.75rem;
+                padding: 0.45rem 0.8rem;
+                border-radius: 14px;
+                gap: 0.5rem;
+            }
+
+            .floating-header h1 {
+                font-size: 0.95rem;
+            }
+
+            .floating-header p {
+                display: none;
+            }
+
+            .telemetry-hud {
+                top: 0.75rem;
+                right: 0.75rem;
+                padding: 0.45rem 0.75rem;
+                border-radius: 14px;
+                gap: 0.75rem;
+            }
+
+            .hud-desktop-only {
+                display: none !important;
+            }
+
+            .voice-hud-banner {
+                top: 3.75rem;
+                left: 50%;
+                transform: translateX(-50%);
+                width: auto;
+                max-width: calc(100vw - 1.5rem);
+                padding: 0.45rem 0.9rem;
+                font-size: 0.82rem;
+                border-radius: 20px;
+                white-space: nowrap;
+            }
+
+            .voice-hud-banner:hover {
+                transform: translateX(-50%);
+            }
+
+            /* Sleek Collapsible Bottom Drawer for Mobile */
             .glass-panel-sidebar {
                 top: auto;
-                left: 1rem;
-                right: 1rem;
-                bottom: 1rem;
+                left: 0.75rem;
+                right: 0.75rem;
+                bottom: 0.75rem;
                 width: auto;
-                max-height: 50vh;
+                max-width: none;
+                max-height: 60vh;
+                border-radius: 20px;
+                padding: 0.85rem 1rem;
+                transition: max-height 0.35s cubic-bezier(0.16, 1, 0.3, 1), padding 0.35s ease;
+                z-index: 50;
+            }
+
+            .glass-panel-sidebar.collapsed {
+                max-height: 48px;
+                overflow: hidden;
+                padding-bottom: 0.4rem;
+            }
+
+            .drawer-toggle-bar {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                cursor: pointer;
+                padding-bottom: 0.5rem;
+                margin-bottom: 0.4rem;
+                border-bottom: 1px solid var(--glass-border);
+                user-select: none;
             }
 
             .depth-pip-container {
@@ -556,15 +627,15 @@
             <span class="hud-label">Inference FPS</span>
             <span class="hud-val" id="hud-fps">--</span>
         </div>
-        <div class="hud-item">
+        <div class="hud-item hud-desktop-only">
             <span class="hud-label">Inference</span>
             <span class="hud-val" id="hud-infer">-- ms</span>
         </div>
-        <div class="hud-item">
+        <div class="hud-item hud-desktop-only">
             <span class="hud-label">End-to-End</span>
             <span class="hud-val" id="hud-latency">-- ms</span>
         </div>
-        <div class="hud-item">
+        <div class="hud-item hud-desktop-only">
             <span class="hud-label">Dropped</span>
             <span class="hud-val" id="hud-dropped">0</span>
         </div>
@@ -586,8 +657,16 @@
         </div>
     </div>
 
-    <!-- FLOATING TRANSPARENT CONTROLS & LOG SIDEBAR -->
-    <div class="glass-panel-sidebar">
+    <!-- FLOATING TRANSPARENT CONTROLS & LOG SIDEBAR / BOTTOM DRAWER -->
+    <div class="glass-panel-sidebar collapsed">
+        <!-- MOBILE DRAWER TOGGLE HANDLE -->
+        <div class="drawer-toggle-bar" id="drawer-toggle-bar" onclick="toggleDrawer()">
+            <span style="font-weight: 600; font-size: 0.88rem; color: #38bdf8; display: flex; align-items: center; gap: 7px;">
+                <span id="drawer-chevron">▲</span> Controls & Logs
+            </span>
+            <span id="drawer-hint" style="font-size: 0.72rem; color: var(--text-muted);">Tap to expand</span>
+        </div>
+
         <!-- ACTIONS SECTION -->
         <div class="actions-group">
             <h3 class="panel-section-title">Quick Actions</h3>
@@ -800,15 +879,33 @@
 
         const captureCanvas = document.createElement('canvas');
         const captureCtx = captureCanvas.getContext('2d');
+        const MAX_STREAM_DIM = 480; // 480px downscaling delivers 15-25 FPS with tiny 15KB payloads on mobile
 
         function sendFrame() {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             if (isFrameInFlight) return; // Prevent client frame backlog
 
             if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                captureCanvas.width = video.videoWidth || 640;
-                captureCanvas.height = video.videoHeight || 480;
-                captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+                const vw = video.videoWidth || 640;
+                const vh = video.videoHeight || 480;
+
+                // Scale down proportionally so longest edge does not exceed MAX_STREAM_DIM
+                const scale = Math.min(1.0, MAX_STREAM_DIM / Math.max(vw, vh));
+                const targetW = Math.round(vw * scale);
+                const targetH = Math.round(vh * scale);
+
+                if (captureCanvas.width !== targetW || captureCanvas.height !== targetH) {
+                    captureCanvas.width = targetW;
+                    captureCanvas.height = targetH;
+                }
+
+                // Overlay canvas dimensions match capture canvas for 1:1 crisp box drawing
+                if (canvas.width !== targetW || canvas.height !== targetH) {
+                    canvas.width = targetW;
+                    canvas.height = targetH;
+                }
+
+                captureCtx.drawImage(video, 0, 0, targetW, targetH);
 
                 isFrameInFlight = true;
                 lastFrameSentTime = performance.now();
@@ -857,8 +954,8 @@
 
                 // Corridor label at bottom
                 ctx.fillStyle = 'rgba(56, 189, 248, 0.4)';
-                ctx.font = '12px Outfit, sans-serif';
-                ctx.fillText("WALKING CORRIDOR", (corridor.x_min + corridor.x_max) / 2 - 55, canvas.height - 12);
+                ctx.font = '11px Outfit, sans-serif';
+                ctx.fillText("WALKING CORRIDOR", (corridor.x_min + corridor.x_max) / 2 - 50, canvas.height - 10);
                 ctx.restore();
             }
 
@@ -871,6 +968,8 @@
             hazards.forEach(h => {
                 if (h.track_id) hazardMap.set(h.track_id, h);
             });
+
+            const labelFontSize = Math.max(12, Math.round(canvas.width * 0.034));
 
             for (let det of lastDetections) {
                 const trackId = det.track_id;
@@ -888,34 +987,56 @@
                 }
                 smoothedBoxes[key] = [x1, y1, x2, y2];
 
+                // Special high-visibility rendering for stairs / elevation hazard
+                if (det.class_name === 'stairs' || det.class_name === 'staircase' || det.class_name === 'steps') {
+                    ctx.fillStyle = 'rgba(239, 68, 68, 0.22)';
+                    ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+                    ctx.strokeStyle = '#ef4444';
+                    ctx.lineWidth = 4;
+                    ctx.shadowColor = 'rgba(239, 68, 68, 0.8)';
+                    ctx.shadowBlur = 10;
+                    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                    ctx.shadowBlur = 0;
+
+                    const bannerH = labelFontSize + 10;
+                    const bannerW = Math.min(x2 - x1, 210);
+                    const bY = y1 > bannerH ? y1 - bannerH : 0;
+                    ctx.fillStyle = '#ef4444';
+                    ctx.fillRect(x1, bY, bannerW, bannerH);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold ' + labelFontSize + 'px Outfit, sans-serif';
+                    ctx.fillText("⚠️ STAIRS / ELEVATION", x1 + 6, bY + bannerH - 6);
+                    continue;
+                }
+
                 const isUrgent = trackId ? urgentSet.has(trackId) : false;
                 const hazardInfo = trackId ? hazardMap.get(trackId) : null;
 
                 // Color coding based on hazard priority
                 let strokeColor = '#38bdf8';
                 let shadowColor = 'rgba(56, 189, 248, 0.5)';
-                let lineWidth = 3;
+                let lineWidth = 2.5;
 
                 if (isUrgent) {
                     strokeColor = '#ef4444';
                     shadowColor = 'rgba(239, 68, 68, 0.7)';
-                    lineWidth = 4;
+                    lineWidth = 3.5;
                 } else if (hazardInfo) {
                     strokeColor = '#f59e0b';
                     shadowColor = 'rgba(245, 158, 11, 0.6)';
-                    lineWidth = 3.5;
+                    lineWidth = 3;
                 }
 
                 ctx.strokeStyle = strokeColor;
                 ctx.lineWidth = lineWidth;
                 ctx.shadowColor = shadowColor;
-                ctx.shadowBlur = isUrgent ? 12 : 6;
+                ctx.shadowBlur = isUrgent ? 10 : 5;
                 ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
                 ctx.shadowBlur = 0;
 
                 // Label construction
                 ctx.fillStyle = strokeColor;
-                ctx.font = 'bold 20px Outfit, sans-serif';
+                ctx.font = 'bold ' + labelFontSize + 'px Outfit, sans-serif';
 
                 let labelParts = [];
                 if (trackId) labelParts.push(`[#${trackId}]`);
@@ -923,7 +1044,7 @@
                 labelParts.push(`${(det.confidence * 100).toFixed(0)}%`);
 
                 if (det.is_approaching) {
-                    labelParts.push("↑ APPROACHING");
+                    labelParts.push("↑ APP");
                 }
 
                 const distData = distances.find(d =>
@@ -935,7 +1056,7 @@
                 }
 
                 const labelText = labelParts.join(' ');
-                ctx.fillText(labelText, x1, y1 > 26 ? y1 - 8 : 24);
+                ctx.fillText(labelText, x1, y1 > (labelFontSize + 6) ? y1 - 6 : (labelFontSize + 6));
             }
 
             // Clean up keys for objects no longer present
@@ -1242,6 +1363,17 @@
                 };
 
                 recognition.onerror = (e) => {
+                    // Check for WhatsApp or other app microphone locking conflict
+                    if (e.error === 'audio-capture') {
+                        addLog("Voice notice: Mic is in use by another app (e.g. WhatsApp / Phone Call). Mic mode paused.");
+                        stopVoiceCommands();
+                        return;
+                    }
+                    if (e.error === 'not-allowed') {
+                        addLog("Voice notice: Microphone access denied. Please grant permission in browser.");
+                        stopVoiceCommands();
+                        return;
+                    }
                     if (e.error !== 'no-speech' && e.error !== 'aborted') {
                         addLog("Voice notice: " + e.error);
                     }
@@ -1250,7 +1382,7 @@
                             if (voiceActive && recognition) {
                                 try { recognition.start(); } catch (err) { }
                             }
-                        }, 400);
+                        }, 800);
                     }
                 };
 
@@ -1260,7 +1392,7 @@
                             if (voiceActive && recognition) {
                                 try { recognition.start(); } catch (err) { }
                             }
-                        }, 300);
+                        }, 400);
                     }
                 };
             }
@@ -1386,6 +1518,24 @@
 
             scannedFrames = [];
             document.getElementById('person-name').value = '';
+        }
+
+        function toggleDrawer() {
+            const sidebar = document.querySelector('.glass-panel-sidebar');
+            const chevron = document.getElementById('drawer-chevron');
+            const hint = document.getElementById('drawer-hint');
+            if (!sidebar) return;
+
+            sidebar.classList.toggle('collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            if (chevron) chevron.innerText = isCollapsed ? '▲' : '▼';
+            if (hint) hint.innerText = isCollapsed ? 'Tap to expand' : 'Tap to minimize';
+        }
+
+        // On mobile portrait mode, default drawer to collapsed so camera feed is 100% visible
+        if (window.innerWidth <= 768) {
+            const sidebar = document.querySelector('.glass-panel-sidebar');
+            if (sidebar) sidebar.classList.add('collapsed');
         }
 
         // Initialize

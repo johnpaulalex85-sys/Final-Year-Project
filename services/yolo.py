@@ -135,10 +135,127 @@ DEFAULT_CUSTOM_CLASSES = [
 
 # High-priority curated walking hazard classes for high-speed YOLO-World execution
 STREAMLINED_WALKING_CLASSES = [
-    "person", "pedestrian", "car", "bus", "truck", "motorcycle", "bicycle",
-    "staircase", "stairs", "step", "curb", "pothole", "obstacle",
-    "pole", "tree", "door", "wall", "chair", "table", "dustbin",
-    "traffic light", "pedestrian crossing", "dog", "wet floor", "road barrier"
+    # People and moving hazards
+    "person",
+    "pedestrian",
+    "child",
+    "cyclist",
+    "person on a bicycle",
+    "person on a motorcycle",
+
+    # Vehicles
+    "bicycle",
+    "motorcycle",
+    "scooter",
+    "electric scooter",
+    "car",
+    "taxi",
+    "van",
+    "bus",
+    "truck",
+    "moving vehicle",
+
+    # Steps, stairs, and changes in elevation
+    "stairs",
+    "staircase",
+    "steps",
+    "downstairs",
+    "upstairs",
+    "curb",
+    "kerb",
+    "raised pavement",
+    "roadside edge",
+    "ramp",
+    "steep slope",
+
+    # Walking-surface hazards
+    "pothole",
+    "hole in the ground",
+    "uneven pavement",
+    "broken pavement",
+    "cracked sidewalk",
+    "loose paving stone",
+    "construction debris",
+    "rubble",
+    "open drain",
+    "drain hole",
+    "manhole",
+    "open manhole",
+    "water puddle",
+    "flooded pavement",
+
+    # Fixed obstacles
+    "pole",
+    "lamp post",
+    "electric pole",
+    "traffic sign",
+    "signpost",
+    "bollard",
+    "road barrier",
+    "traffic barrier",
+    "construction barrier",
+    "fence",
+    "gate",
+    "wall",
+    "pillar",
+    "tree trunk",
+    "low-hanging branch",
+
+    # Objects blocking the path
+    "chair",
+    "table",
+    "bench",
+    "stool",
+    "box",
+    "cardboard box",
+    "crate",
+    "trash bin",
+    "garbage bag",
+    "suitcase",
+    "backpack",
+    "shopping cart",
+    "trolley",
+    "wheelchair",
+    "stroller",
+    "parked bicycle",
+    "parked motorcycle",
+
+    # Objects near head or upper body height
+    "low ceiling",
+    "overhanging obstacle",
+    "hanging sign",
+    "hanging wire",
+    "protruding object",
+    "open cabinet door",
+    "open door",
+
+    # Animals that may cross the walking path
+    "dog",
+    "cat",
+    "cow",
+    "goat",
+    "horse",
+    "stray animal",
+
+    # Road and pedestrian infrastructure
+    "traffic cone",
+    "roadwork",
+    "excavation",
+    "road divider",
+    "median barrier",
+    "railway crossing barrier",
+    "bollard post",
+
+    # Common dropped or misplaced objects
+    "brick",
+    "stone",
+    "rock",
+    "wooden plank",
+    "metal pipe",
+    "cable",
+    "hose",
+    "fallen branch",
+    "fallen tree",
 ]
 
 class ObjectDetector:
